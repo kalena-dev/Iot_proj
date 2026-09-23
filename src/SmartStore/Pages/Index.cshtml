@@ -1,0 +1,237 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Customer registration";
+    var alertClass = Model.StatusKind == "success" ? "notice--success" : "notice--error";
+}
+
+<section class="hero" aria-labelledby="page-title">
+    <div class="hero__copy">
+        <span class="eyebrow">IoT smart store · phase 01</span>
+        <h1 id="page-title">Customer registry</h1>
+        <p>Capture customer details, store them in MongoDB Atlas, and confirm the result on the Raspberry Pi breadboard.</p>
+    </div>
+    <div class="hero__flow" aria-label="System data flow">
+        <span>Capture</span>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
+        <span>Communicate</span>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
+        <span>Present</span>
+    </div>
+</section>
+
+@if (!string.IsNullOrWhiteSpace(Model.StatusMessage))
+{
+    <div class="notice @alertClass" role="alert" data-dismissible>
+        <div class="notice__icon" aria-hidden="true">
+            @if (Model.StatusKind == "success")
+            {
+                <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg>
+            }
+            else
+            {
+                <svg viewBox="0 0 24 24"><path d="M12 8v5m0 3.5v.5M4.5 20h15a1.5 1.5 0 0 0 1.3-2.25l-7.5-13a1.5 1.5 0 0 0-2.6 0l-7.5 13A1.5 1.5 0 0 0 4.5 20Z" /></svg>
+            }
+        </div>
+        <div>
+            <strong>@(Model.StatusKind == "success" ? "Customer added" : "Action unsuccessful")</strong>
+            <p>@Model.StatusMessage</p>
+        </div>
+        <button type="button" class="notice__close" aria-label="Dismiss notification">×</button>
+    </div>
+}
+
+<div class="workspace">
+    <section class="panel form-panel" aria-labelledby="form-title">
+        <div class="panel__heading">
+            <div>
+                <span class="section-number">01</span>
+                <h2 id="form-title">Add a new customer</h2>
+            </div>
+            <span class="required-note"><span aria-hidden="true">*</span> Required fields</span>
+        </div>
+
+        <form method="post" id="customer-form">
+            <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
+
+            <fieldset>
+                <legend>Personal details</legend>
+                <div class="form-grid">
+                    <div class="field">
+                        <label asp-for="Input.FirstName"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <input asp-for="Input.FirstName" autocomplete="given-name" placeholder="Jordan" />
+                        <span asp-validation-for="Input.FirstName" class="field-error"></span>
+                    </div>
+                    <div class="field">
+                        <label asp-for="Input.LastName"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <input asp-for="Input.LastName" autocomplete="family-name" placeholder="Lee" />
+                        <span asp-validation-for="Input.LastName" class="field-error"></span>
+                    </div>
+                    <div class="field">
+                        <label asp-for="Input.Email"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <input asp-for="Input.Email" autocomplete="email" placeholder="jordan@example.com" />
+                        <span asp-validation-for="Input.Email" class="field-error"></span>
+                    </div>
+                    <div class="field">
+                        <label asp-for="Input.Phone"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <input asp-for="Input.Phone" autocomplete="tel" placeholder="514-555-0182" />
+                        <span asp-validation-for="Input.Phone" class="field-error"></span>
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Address</legend>
+                <div class="form-grid">
+                    <div class="field field--wide">
+                        <label asp-for="Input.Street"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <input asp-for="Input.Street" autocomplete="street-address" placeholder="821 Sainte-Catherine Street W" />
+                        <span asp-validation-for="Input.Street" class="field-error"></span>
+                    </div>
+                    <div class="field">
+                        <label asp-for="Input.City"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <input asp-for="Input.City" autocomplete="address-level2" placeholder="Montreal" />
+                        <span asp-validation-for="Input.City" class="field-error"></span>
+                    </div>
+                    <div class="field">
+                        <label asp-for="Input.Province"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <select asp-for="Input.Province" autocomplete="address-level1">
+                            <option value="">Choose a province</option>
+                            <option value="AB">Alberta</option>
+                            <option value="BC">British Columbia</option>
+                            <option value="MB">Manitoba</option>
+                            <option value="NB">New Brunswick</option>
+                            <option value="NL">Newfoundland and Labrador</option>
+                            <option value="NS">Nova Scotia</option>
+                            <option value="NT">Northwest Territories</option>
+                            <option value="NU">Nunavut</option>
+                            <option value="ON">Ontario</option>
+                            <option value="PE">Prince Edward Island</option>
+                            <option value="QC">Quebec</option>
+                            <option value="SK">Saskatchewan</option>
+                            <option value="YT">Yukon</option>
+                        </select>
+                        <span asp-validation-for="Input.Province" class="field-error"></span>
+                    </div>
+                    <div class="field">
+                        <label asp-for="Input.PostalCode"></label>
+                        <span class="required-mark" aria-hidden="true">*</span>
+                        <input asp-for="Input.PostalCode" autocomplete="postal-code" placeholder="H3G 1M8" />
+                        <span asp-validation-for="Input.PostalCode" class="field-error"></span>
+                    </div>
+                </div>
+            </fieldset>
+
+            <div class="form-actions">
+                <p><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.9 8.3 7 10 4.1-1.7 7-5.4 7-10V6l-7-3Z" /><path d="m9 12 2 2 4-5" /></svg> Data is sent directly to MongoDB Atlas.</p>
+                <button type="submit" class="primary-button">
+                    <span class="button-label">Add customer</span>
+                    <span class="button-loading" aria-hidden="true">Saving…</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <aside class="sidebar" aria-label="System information">
+        <section class="panel status-panel">
+            <div class="panel__heading panel__heading--compact">
+                <div>
+                    <span class="section-number">02</span>
+                    <h2>System status</h2>
+                </div>
+                <span class="live-badge">Live</span>
+            </div>
+
+            <div class="status-list">
+                <div class="status-row">
+                    <span class="status-icon status-icon--database" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7" /></svg>
+                    </span>
+                    <div>
+                        <strong>MongoDB Atlas</strong>
+                        <small>@(Model.DatabaseAvailable ? "Connection available" : "Connection unavailable")</small>
+                    </div>
+                    <span class="status-dot @(Model.DatabaseAvailable ? "status-dot--ok" : "status-dot--bad")" aria-hidden="true"></span>
+                </div>
+                <div class="status-row">
+                    <span class="status-icon status-icon--blue" aria-hidden="true"><span class="led led--blue"></span></span>
+                    <div>
+                        <strong>Success output</strong>
+                        <small>Blue LED · BCM @Model.Gpio.BlueLedPin</small>
+                    </div>
+                    <span class="pin-label">PIN 11</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-icon status-icon--red" aria-hidden="true"><span class="led led--red"></span></span>
+                    <div>
+                        <strong>Failure output</strong>
+                        <small>Red LED · BCM @Model.Gpio.RedLedPin</small>
+                    </div>
+                    <span class="pin-label">PIN 13</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-icon status-icon--buzzer" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M8 15h8l-1-7h-6l-1 7Zm-2 4h12M12 4v1M5.5 6.5l1 1M18.5 6.5l-1 1" /></svg>
+                    </span>
+                    <div>
+                        <strong>Audible alert</strong>
+                        <small>Buzzer · BCM @Model.Gpio.BuzzerPin</small>
+                    </div>
+                    <span class="pin-label">PIN 15</span>
+                </div>
+            </div>
+
+            @if (!Model.DatabaseAvailable)
+            {
+                <p class="system-warning" role="status">@Model.DatabaseWarning</p>
+            }
+        </section>
+
+        <section class="panel recent-panel">
+            <div class="panel__heading panel__heading--compact">
+                <div>
+                    <span class="section-number">03</span>
+                    <h2>Recently added</h2>
+                </div>
+                <span class="record-count">@Model.RecentCustomers.Count / 5</span>
+            </div>
+
+            @if (Model.RecentCustomers.Count == 0)
+            {
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20v-1.5A3.5 3.5 0 0 0 12.5 15h-5A3.5 3.5 0 0 0 4 18.5V20M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM16 8h5M18.5 5.5v5" /></svg>
+                    <strong>No customer records yet</strong>
+                    <span>New registrations will appear here.</span>
+                </div>
+            }
+            else
+            {
+                <ol class="customer-list">
+                    @foreach (var customer in Model.RecentCustomers)
+                    {
+                        <li>
+                            <span class="avatar" aria-hidden="true">@customer.FirstName[0]@customer.LastName[0]</span>
+                            <div>
+                                <strong>@customer.FullName</strong>
+                                <small>@customer.Email</small>
+                                <span>@customer.Address.City, @customer.Address.Province · @customer.CreatedAtUtc.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                            </div>
+                        </li>
+                    }
+                </ol>
+            }
+        </section>
+    </aside>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

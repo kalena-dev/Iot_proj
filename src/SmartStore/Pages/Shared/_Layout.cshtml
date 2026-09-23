@@ -1,0 +1,42 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f6f8" />
+    <title>@ViewData["Title"] · Northstar Smart Store</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/SmartStore.styles.css" asp-append-version="true" />
+</head>
+<body>
+    <header class="site-header">
+        <div class="shell site-header__inner">
+            <a class="brand" asp-page="/Index" aria-label="Northstar Smart Store home">
+                <span class="brand__mark" aria-hidden="true">
+                    <svg viewBox="0 0 28 28"><path d="M14 3 4.5 8.5v11L14 25l9.5-5.5v-11L14 3Z" /><path d="m9 15 3 3 7-8" /></svg>
+                </span>
+                <span><strong>Northstar</strong><small>Smart store registry</small></span>
+            </a>
+            <div class="header-meta">
+                <span class="course-code">420-521-VA</span>
+                <span class="device-state"><i aria-hidden="true"></i> Raspberry Pi 5</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="shell" role="main">
+        @RenderBody()
+    </main>
+
+    <footer class="site-footer">
+        <div class="shell">
+            <span>Internet of Things · Final Project</span>
+            <span>Vanier College · Phase 1</span>
+        </div>
+    </footer>
+
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
