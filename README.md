@@ -10,7 +10,7 @@ A C#/.NET 8 IoT application for the Vanier College **420-521-VA** final project.
 | Application | C# / .NET 8 | Request handling, normalization, error handling, dependency injection |
 | Data communication | MongoDB .NET Driver over TLS | Sends customer documents to MongoDB Atlas |
 | Database | MongoDB Atlas | `smart_store.customers`, with a unique email index |
-| Device output | `System.Device.Gpio` | Blue success LED; red failure LED and active buzzer |
+| Device output | `System.Device.Gpio` | Blue success LED; red failure LED and active/passive buzzer |
 
 ### Data flow
 
@@ -47,18 +47,18 @@ The application creates these indexes before the first insert:
 
 ## Breadboard wiring (Raspberry Pi 5)
 
-The configured numbers are **BCM GPIO numbers**, not header positions.
+The configured numbers are **BCM GPIO numbers**, not header positions. The GPIO output code drives only the two LEDs and buzzer; it does not read or power an RFID reader. A kit's wiring must match the GPIO numbers below.
 
 | Component | GPIO | Physical pin | Connection |
 |---|---:|---:|---|
 | Blue LED | BCM 17 | 11 | GPIO → 220–330 Ω resistor → LED anode; LED cathode → GND rail |
 | Red LED | BCM 27 | 13 | GPIO → 220–330 Ω resistor → LED anode; LED cathode → GND rail |
-| Active 3.3 V buzzer | BCM 22 | 15 | Buzzer `+` → GPIO; buzzer `-` → GND rail |
+| Freenove buzzer (active or passive) | BCM 22 | 15 | GPIO → 1 kΩ resistor → NPN base; emitter → GND; collector → buzzer `-`; buzzer `+` → 5 V (common GND) |
 | Ground rail | GND | 6 | Pi GND → breadboard ground rail |
 
-> Turn the Pi off before changing wires. Use only a low-current 3.3 V active buzzer that stays within the GPIO current limit. A 5 V or higher-current buzzer needs a transistor driver and must not be connected directly to a GPIO pin.
+> Power off the Pi before changing wires. The Freenove RFID starter kit guide uses an S8050 NPN transistor to drive its buzzer from 5 V: the Pi GPIO **must not** connect directly to 5 V or directly supply the kit buzzer. Check the transistor's pinout before wiring. For other buzzers, verify voltage and current ratings first.
 
-On success, the blue LED turns on for 1.5 seconds. On validation, duplicate-email, or database failure, the red LED turns on while the buzzer sounds three times. All outputs return low afterward.
+Set `Gpio:BuzzerMode` to `Passive` (default) for the kit's passive buzzer; it uses software-generated ~2 kHz square waves. Set it to `Active` for the kit's active buzzer, which sounds with a steady signal. If the buzzer wiring is unverified, set `Gpio__BuzzerEnabled=false` while testing LEDs; it will not open the buzzer GPIO. Software cannot increase the supply voltage or overcome an underpowered/miswired buzzer. On success, the blue LED turns on for 1.5 seconds. On validation, duplicate-email, or database failure, the red LED turns on while the buzzer beeps three times. All outputs return low afterward.
 
 ## MongoDB Atlas setup
 
@@ -70,7 +70,7 @@ On success, the blue LED turns on for 1.5 seconds. On validation, duplicate-emai
    MONGODB_URI="mongodb+srv://USERNAME:PASSWORD@CLUSTER.mongodb.net"
    ```
 
-The repository's local `.env` is ignored by Git. Alternatively, leave credentials outside the repository and set `MONGODB_ENV_FILE` to that file's absolute path. Real environment variables take precedence over `.env` values.
+The repository's local `.env` is ignored by Git. On this Pi, the app also loads `/home/matt/Downloads/atlas-credentials.env` automatically if there is no local `.env`. You can override this with `MONGODB_ENV_FILE` set to another file's absolute path. Real environment variables take precedence over file values. Credentials stay outside the compiled app.
 
 ## Run on a development computer
 
@@ -92,14 +92,16 @@ curl http://localhost:5198/health
 
 ## Run on Raspberry Pi 5
 
-On 64-bit Raspberry Pi OS:
+On 64-bit Raspberry Pi OS, install the libgpiod version provided by your OS (`libgpiod3` on Debian 13/Trixie; `libgpiod2` on older releases):
 
 ```bash
 sudo apt update
-sudo apt install -y libgpiod2
+sudo apt install -y libgpiod3 # use libgpiod2 on older Raspberry Pi OS
 sudo usermod -aG gpio "$USER"
 # Sign out/reboot after changing group membership.
 ```
+
+On Pi 5 with `libgpiod3`, the application selects the RP1 chip using the libgpiod v2 driver. GPIO signals occur only after a customer registration or demo checkout succeeds or fails; the LEDs are otherwise off.
 
 Install the .NET 8 SDK/runtime on the Pi, copy the project and its untracked `.env`, then:
 
@@ -117,6 +119,10 @@ dotnet publish src/SmartStore/SmartStore.csproj \
 ```
 
 Copy `publish/pi` and an untracked `.env` to the Pi, then start `./SmartStore` with `ASPNETCORE_URLS=http://0.0.0.0:5198`.
+
+## Self-checkout classroom demo
+
+Open `/Checkout` for the customer flow and `/Management` for inventory and sales. Enter or scan a sample code (1001 Apple, 1002 Bread, 1003 Milk, 1004 Chocolate bar), add items, and choose **Approve** or **Decline** for the simulated payment. No payment API or card details are used. Approved checkouts save a sale in MongoDB's `demo_sales` collection, reduce the in-memory stock, and flash the blue LED. Declines and checkout failures trigger the red LED and buzzer. The management page shows recent demo sales and lets you change stock for testing. Stock resets to the sample values when the app restarts; sales remain in MongoDB. This is a classroom simulation, not a production checkout or secured management interface.
 
 ## Demonstration checklist
 

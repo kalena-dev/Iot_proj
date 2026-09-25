@@ -20,6 +20,15 @@ public sealed class MongoCustomerRepository : ICustomerRepository
 
     public async Task AddAsync(Customer customer, CancellationToken cancellationToken = default)
     {
+        // Also catch existing accounts saved before email normalization was added.
+        // The unique index below remains the final guard against simultaneous inserts.
+        var existing = await _customers.Find(
+                Builders<Customer>.Filter.Eq(c => c.Email, customer.Email),
+                new FindOptions { Collation = new Collation("en", strength: CollationStrength.Secondary) })
+            .AnyAsync(cancellationToken);
+        if (existing)
+            throw new CustomerAlreadyExistsException(customer.Email);
+
         await EnsureIndexesAsync(cancellationToken);
 
         try

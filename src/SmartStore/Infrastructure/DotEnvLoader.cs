@@ -11,7 +11,8 @@ public static class DotEnvLoader
         var explicitPath = Environment.GetEnvironmentVariable("MONGODB_ENV_FILE");
         var path = !string.IsNullOrWhiteSpace(explicitPath)
             ? Path.GetFullPath(explicitPath)
-            : FindInCurrentOrParentDirectories(".env");
+            : FindInCurrentOrParentDirectories(".env")
+                ?? "/home/matt/Downloads/atlas-credentials.env";
 
         if (path is null || !File.Exists(path))
         {

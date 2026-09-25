@@ -36,7 +36,8 @@ public sealed class CustomerInput
     public string City { get; set; } = string.Empty;
 
     [Required(ErrorMessage = "Select a province or territory.")]
-    [StringLength(2, MinimumLength = 2)]
+    [RegularExpression(@"^(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)$",
+        ErrorMessage = "Select a valid province or territory.")]
     [Display(Name = "Province / territory")]
     public string Province { get; set; } = "QC";
 

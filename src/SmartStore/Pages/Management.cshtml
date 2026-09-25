@@ -1,0 +1,44 @@
+@page
+@model ManagementModel
+@{
+    ViewData["Title"] = "Management demo";
+    var revenue = Model.Sales.Sum(s => s.Total);
+}
+<section class="hero"><div class="hero__copy"><span class="eyebrow">Management side · classroom demo</span>
+    <h1>Store dashboard</h1><p>Review inventory and recent demo sales. Stock adjustments are in memory and reset when the app restarts; sales are saved to MongoDB.</p>
+</div></section>
+@if (Model.Message is not null) { <div class="notice notice--success" role="status"><p>@Model.Message</p></div> }
+<div class="workspace">
+<section class="panel form-panel">
+    <div class="panel__heading"><h2>Inventory</h2></div>
+    @foreach (var product in Model.Products)
+    {
+        <div class="demo-cart-row"><span><strong>@product.Name</strong> · @product.Code · $@product.Price.ToString("F2")</span><span>@product.Stock in stock</span></div>
+    }
+    <h2>Adjust demo stock</h2>
+    <form method="post" class="demo-scan">
+        <label asp-for="Code">Item code</label>
+        <select asp-for="Code">
+            @foreach (var product in Model.Products) { <option value="@product.Code">@product.Name (@product.Code)</option> }
+        </select>
+        <label asp-for="Stock">New quantity</label><input asp-for="Stock" type="number" min="0" max="9999" required />
+        <button type="submit" class="primary-button">Update stock</button>
+    </form>
+</section>
+<aside class="sidebar"><section class="panel status-panel">
+    <div class="panel__heading"><h2>Recent sales</h2></div>
+    @if (Model.DatabaseWarning is not null) { <p role="alert">@Model.DatabaseWarning</p> }
+    else
+    {
+        <p>Last @Model.Sales.Count sale(s) · @revenue.ToString("C") total shown</p>
+        @foreach (var sale in Model.Sales)
+        {
+            <div class="demo-sale"><strong>@sale.CreatedAtUtc.ToLocalTime().ToString("g") · $@sale.Total.ToString("F2")</strong>
+                <div>@string.Join(", ", sale.Items.Select(i => $"{i.Quantity}× {i.Name}"))</div>
+            </div>
+        }
+        @if (Model.Sales.Count == 0) { <p>Make a demo purchase to see it here.</p> }
+    }
+    <a asp-page="/Checkout">Go to self-checkout →</a>
+</section></aside>
+</div>

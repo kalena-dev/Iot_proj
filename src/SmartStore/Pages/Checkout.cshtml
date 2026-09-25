@@ -1,0 +1,45 @@
+@page
+@model CheckoutModel
+@{
+    ViewData["Title"] = "Self-checkout demo";
+}
+<section class="hero"><div class="hero__copy">
+    <span class="eyebrow">Customer side · classroom demo</span>
+    <h1>Self-checkout</h1>
+    <p>Type an item code or scan one with a keyboard-style barcode scanner. Payment is simulated: no cards or money are involved.</p>
+</div></section>
+@if (Model.Message is not null)
+{
+    <div class="notice @(Model.MessageKind == "success" ? "notice--success" : "notice--error")" role="alert"><div><strong>@(Model.MessageKind == "success" ? "Checkout complete" : "Checkout unsuccessful")</strong><p>@Model.Message</p></div></div>
+}
+<div class="workspace">
+    <section class="panel form-panel">
+        <div class="panel__heading"><h2>Scan items</h2></div>
+        <div class="demo-scan"><label for="item-code">Item code</label><input id="item-code" inputmode="numeric" autocomplete="off" placeholder="Try 1001" autofocus /><button type="button" class="primary-button" id="add-item">Add item</button></div>
+        <p id="scan-error" role="alert" class="field-error"></p>
+        <h2>Your cart</h2>
+        <div id="cart-list" aria-live="polite">No items yet.</div>
+        <p class="demo-total">Total: <strong id="cart-total">$0.00</strong></p>
+        <form method="post" id="checkout-form">
+            <input type="hidden" asp-for="Cart" />
+            <label for="PaymentResult">Demo payment</label>
+            <select asp-for="PaymentResult"><option value="approve">Approve (test success)</option><option value="decline">Decline (test failure)</option></select>
+            <button type="submit" class="primary-button" id="checkout-button" disabled>Complete demo checkout</button>
+        </form>
+    </section>
+    <aside class="sidebar"><section class="panel status-panel">
+        <div class="panel__heading"><h2>Sample items</h2></div>
+        <p>Click an item or type its code. A barcode scanner that types the same code and presses Enter also works.</p>
+        <div class="demo-products">
+        @foreach (var item in Model.Products)
+        {
+            <button type="button" class="demo-product" data-code="@item.Code" data-name="@item.Name" data-price="@item.Price.ToString(System.Globalization.CultureInfo.InvariantCulture)" data-stock="@item.Stock">
+                <strong>@item.Name</strong><span>Code @item.Code · $@item.Price.ToString("F2") · @item.Stock left</span>
+            </button>
+        }
+        </div>
+        <p>Successful checkout: blue LED. Declined payment or failed checkout: red LED + buzzer. Unknown codes show an on-screen message.</p>
+        <a asp-page="/Management">View management dashboard →</a>
+    </section></aside>
+</div>
+@section Scripts { <script src="~/js/checkout.js" asp-append-version="true"></script> }
