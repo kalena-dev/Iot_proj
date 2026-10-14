@@ -19,3 +19,13 @@ Thumbs.db
 
 # Publish output
 publish/
+
+# Phase 2 generated files and device credentials
+**/node_modules/
+iot-server/dist/
+**/__pycache__/
+**/*.pyc
+.venv/
+firmware/**/secrets.h
+firmware/build/
+*.log

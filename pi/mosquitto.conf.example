@@ -1,0 +1,6 @@
+# Copy to /etc/mosquitto/conf.d/northstar.conf (after checking existing listeners).
+# Classroom private LAN only; use TLS before exposing outside a trusted network.
+listener 1883
+allow_anonymous false
+password_file /etc/mosquitto/northstar-passwords
+# Debian/Raspberry Pi OS's main mosquitto.conf already configures persistence.

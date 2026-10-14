@@ -1,0 +1,17 @@
+[Unit]
+Description=Northstar Phase 2 TypeScript MQTT and email service
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=matt
+WorkingDirectory=/home/matt/Downloads/Iot_proj-main/iot-server
+# Use the installed Node 20+ executable; adjust this path on another machine.
+ExecStart=/home/matt/.local/share/pi-node/node-v22.23.2-linux-arm64/bin/node dist/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

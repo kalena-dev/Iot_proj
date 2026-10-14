@@ -1,8 +1,16 @@
-# Northstar Smart Store — Phase 1
+# Northstar Smart Store — Phases 1 & 2
 
 A C#/.NET 8 IoT application for the Vanier College **420-521-VA** final project. It captures customer information in a Razor Pages web form, saves it to MongoDB Atlas, and signals the result through Raspberry Pi 5 GPIO outputs.
 
-## Architecture decisions
+## Phase 2: refrigeration dashboard
+
+**[Complete lab setup, wiring, architecture, requirement checklist and task table →](docs/PHASE2.md)**
+
+The existing store now includes `/Refrigerators`: four live temperature/humidity gauges, independent MongoDB-backed thresholds, email alerts and YES-reply approval, system notifications, and an acknowledged Raspberry Pi motor output. The TypeScript MQTT service matches the supplied draw.io architecture; both ESP32 boards publish DHT11 measurements on `Frig1` and `Frig2`.
+
+New components: `iot-server/` (TypeScript MQTT/MongoDB/SMTP/IMAP), `firmware/FridgeSensor/` (ESP32 sketch), and `pi/` (motor driver adapter and deployment templates). Real sensors, motor wiring and SMTP/IMAP credentials must be configured for the lab. Simulation is explicitly labeled and never presented as physical motor operation.
+
+## Phase 1 architecture decisions
 
 | Layer | Choice | Responsibility |
 |---|---|---|

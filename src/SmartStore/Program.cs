@@ -11,6 +11,13 @@ DotEnvLoader.Load();
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorPages();
+builder.Services.AddHttpClient<IotServiceClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Iot:BaseUrl"] ?? "http://127.0.0.1:3100/");
+    client.Timeout = TimeSpan.FromSeconds(10);
+    var apiKey = builder.Configuration["IOT_API_KEY"];
+    if (!string.IsNullOrWhiteSpace(apiKey)) client.DefaultRequestHeaders.Add("X-Iot-Key", apiKey);
+});
 
 builder.Services
     .AddOptions<MongoDbOptions>()

@@ -1,0 +1,17 @@
+[Unit]
+Description=Northstar existing Razor Pages store and refrigeration dashboard
+After=network-online.target northstar-iot.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=matt
+WorkingDirectory=/home/matt/Downloads/Iot_proj-main
+Environment=ASPNETCORE_URLS=http://0.0.0.0:5198
+ExecStart=/home/matt/.dotnet/dotnet /home/matt/Downloads/Iot_proj-main/publish/web/SmartStore.dll
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

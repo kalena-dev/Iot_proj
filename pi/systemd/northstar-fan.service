@@ -1,0 +1,19 @@
+[Unit]
+Description=Northstar Raspberry Pi fan actuator
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=matt
+SupplementaryGroups=gpio
+WorkingDirectory=/home/matt/Downloads/Iot_proj-main
+ExecStart=/home/matt/Downloads/Iot_proj-main/.venv/bin/python pi/fan_controller.py
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

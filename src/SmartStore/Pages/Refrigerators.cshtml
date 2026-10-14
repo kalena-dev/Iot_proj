@@ -1,0 +1,63 @@
+@page
+@model RefrigeratorsModel
+@{
+    ViewData["Title"] = "Refrigeration dashboard";
+}
+<link rel="stylesheet" href="~/css/refrigerators.css" asp-append-version="true" />
+<section class="hero">
+    <div class="hero__copy">
+        <span class="eyebrow">Phase 2 · Live cold-chain monitoring</span>
+        <h1>Keep your cool.</h1>
+        <p>Two refrigerators. Four live gauges. Email approval before the Raspberry Pi starts the shared cooling fan.</p>
+    </div>
+</section>
+<div id="iot-error" class="notice notice--error" role="alert" hidden></div>
+<div class="iot-connections"><span id="mqtt-state">MQTT: connecting…</span><span id="email-state">Email replies: connecting…</span><span id="refresh-time">Waiting for the IoT service</span></div>
+<div class="fridge-grid">
+@foreach (var id in new[] { "Frig1", "Frig2" })
+{
+    <section class="panel fridge-panel" id="@id" aria-labelledby="@(id)-title">
+        <div class="panel__heading">
+            <div><svg class="fridge-icon" viewBox="0 0 32 40" aria-hidden="true"><rect x="5" y="2" width="22" height="34" rx="3"/><path d="M5 14h22M10 7v3m0 10v7M9 36v2m14-2v2"/></svg><h2 id="@(id)-title">Refrigerator @(id == "Frig1" ? "01" : "02")</h2></div>
+            <span class="sensor-status" data-status>WAITING</span>
+        </div>
+        <p class="sensor-meta">ESP32 + DHT11 · MQTT <code>@id</code></p>
+        <div class="gauge-grid">
+        @foreach (var metric in new[] { "temperature", "humidity" })
+        {
+            <div class="gauge-block">
+                <div class="gauge" data-metric="@metric" role="meter" aria-label="@id @metric" aria-valuemin="0" aria-valuemax="@(metric == "temperature" ? "50" : "100")" aria-valuetext="No reading">
+                    <div class="gauge__inner"><span aria-hidden="true">@(metric == "temperature" ? "℃" : "%")</span><strong data-value>—</strong></div>
+                </div>
+                <h3>@(metric == "temperature" ? "Temperature" : "Humidity")</h3>
+                <small>@(metric == "temperature" ? "0–50 °C" : "0–100% RH")</small>
+            </div>
+        }
+        </div>
+        <p class="reading-time" data-reading>Waiting for a sensor reading</p>
+        <form class="threshold-form" method="post" asp-page-handler="Threshold" data-threshold-form>
+            <input type="hidden" name="fridge" value="@id" />
+            <label for="@(id)-threshold">Email alert above (°C)</label>
+            <input id="@(id)-threshold" name="threshold" type="number" min="0" max="50" step="0.1" required />
+            <button class="primary-button" type="submit">Save threshold</button>
+        </form>
+    </section>
+}
+</div>
+<section class="panel fan-panel">
+    <div class="fan-display"><svg id="fan-icon" viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="26"/><circle cx="30" cy="30" r="4"/><path d="M30 26C14 8 39 3 37 19l-4 8M34 30c23-5 16 20 3 12l-6-8M27 33c-8 23-26 3-12-4l12-1"/></svg><div><h2>Shared cooling fan</h2><strong id="fan-state">UNKNOWN</strong><p id="fan-detail">Waiting for Raspberry Pi acknowledgement.</p></div></div>
+    <form method="post" asp-page-handler="Fan" id="fan-form">
+        <button type="submit" name="on" value="true" class="primary-button" disabled>Turn ON</button>
+        <button type="submit" name="on" value="false" class="primary-button" disabled>Turn OFF</button>
+    </form>
+    <small>Manual classroom controls. Email YES requests ON; NO or no reply never starts the motor. ON means the Pi confirmed its driver output, not measured motor rotation.</small>
+</section>
+<section class="panel notification-panel">
+    <div class="panel__heading"><h2>System notifications</h2><span>Latest 30 · saved in MongoDB</span></div>
+    <p id="action-message" role="status" aria-live="polite"></p>
+    <ol id="iot-notifications"><li>No notifications loaded yet.</li></ol>
+</section>
+<noscript><p role="alert">Enable JavaScript to receive live readings and operate this dashboard.</p></noscript>
+@section Scripts {
+    <script src="~/js/refrigerators.js" asp-append-version="true"></script>
+}

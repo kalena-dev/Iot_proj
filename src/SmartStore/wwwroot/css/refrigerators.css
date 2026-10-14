@@ -1,0 +1,46 @@
+.iot-connections { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:22px; color:var(--muted); font-size:.8rem; }
+.iot-connections span { background:white; border:1px solid var(--line); padding:8px 12px; border-radius:8px; }
+.fridge-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:22px; }
+.fridge-panel { padding:24px; }
+.fridge-icon { width:28px; height:35px; color:var(--navy); }
+.sensor-status { border-radius:6px; background:var(--blue-soft); color:var(--navy); padding:7px 9px; font-size:.65rem; font-weight:700; }
+[data-state="alert"] .sensor-status { background:var(--red-soft); color:#b72f39; }
+[data-state="normal"] .sensor-status { background:var(--mint-soft); color:#11805f; }
+[data-state="offline"] .sensor-status { background:#f1f2f3; color:var(--muted); }
+.sensor-meta, .reading-time { font-size:.8rem; color:var(--muted); line-height:1.6; }
+.gauge-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin:28px 0; }
+.gauge-block { text-align:center; }
+.gauge { --fill:0%; --gauge-color:var(--blue); width:min(100%,170px); aspect-ratio:1; margin:auto; padding:12px; border-radius:50%; background:conic-gradient(from 225deg,var(--gauge-color) var(--fill),#edf1f4 0); }
+.gauge[data-metric="humidity"] { --gauge-color:var(--mint); }
+[data-state="alert"] .gauge[data-metric="temperature"] { --gauge-color:var(--red); }
+[data-state="offline"] .gauge { opacity:.5; }
+.gauge__inner { height:100%; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; flex-direction:column; }
+.gauge__inner strong { font-size:2rem; letter-spacing:-.06em; }
+.gauge__inner span { color:var(--muted); font-size:1rem; }
+.gauge-block h3 { font-size:.9rem; margin:15px 0 5px; }
+.gauge-block small { color:var(--muted); font-size:.72rem; }
+.threshold-form { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding-top:18px; border-top:1px solid var(--line); }
+.threshold-form label { font-size:.8rem; }
+.threshold-form input { width:85px; padding:10px; border:1px solid var(--line); border-radius:7px; }
+.threshold-form .primary-button { min-width:auto; }
+.fan-panel, .notification-panel { margin-top:22px; padding:24px; }
+.fan-panel { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:22px; }
+.fan-display { display:flex; gap:22px; align-items:center; }
+.fan-display svg { width:70px; height:70px; color:var(--mint); flex-shrink:0; }
+.fan-display h2 { font-size:1.1rem; margin-bottom:8px; }
+.fan-display p, .fan-panel small { color:var(--muted); font-size:.8rem; }
+.fan-panel small { flex-basis:100%; }
+#fan-form { display:flex; flex-wrap:wrap; gap:10px; }
+#fan-form button { min-width:110px; }
+.is-running { animation:fan-spin 2s linear infinite; }
+@keyframes fan-spin { to { transform:rotate(360deg); } }
+.notification-panel .panel__heading span { color:var(--muted); font-size:.75rem; }
+#iot-notifications { list-style:none; padding:0; margin-bottom:0; }
+#iot-notifications li { display:grid; grid-template-columns:180px 1fr; gap:20px; padding:14px 0; border-bottom:1px solid var(--soft-line); font-size:.85rem; }
+#iot-notifications time { color:var(--muted); font-size:.75rem; }
+.notification-error, .notification-alert { color:#b72f39; }
+#iot-error { display:block; }
+#iot-error[hidden] { display:none; }
+@media(max-width:820px) { .fridge-grid { grid-template-columns:1fr; } }
+@media(max-width:500px) { #iot-notifications li { grid-template-columns:1fr; gap:5px; } .fridge-panel { padding:18px; } .gauge { padding:9px; } }
+@media(prefers-reduced-motion:reduce) { .is-running { animation:none; } }
