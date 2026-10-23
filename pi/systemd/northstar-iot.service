@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=matt
-WorkingDirectory=/home/matt/Downloads/Iot_proj-main/iot-server
-# Use the installed Node 20+ executable; adjust this path on another machine.
-ExecStart=/home/matt/.local/share/pi-node/node-v22.23.2-linux-arm64/bin/node dist/main.js
+# Render these placeholders with pi/install-services.sh.
+User=@USER@
+WorkingDirectory=@PROJECT_ROOT@
+ExecStart="@NODE@" "@PROJECT_ROOT@/iot-server/dist/main.js"
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

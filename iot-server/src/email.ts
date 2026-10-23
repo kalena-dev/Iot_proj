@@ -3,19 +3,54 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import type { Alert, Mailer } from './model.js';
 import type { Monitor } from './monitor.js';
+import { diagnoseEmailError, type EmailDiagnostic } from './email-diagnostics.js';
 
 export interface EmailConfig {
   enabled: boolean; smtpHost: string; smtpPort: number; smtpUser: string; smtpPassword: string;
   from: string; imapHost: string; imapPort: number; imapUser: string; imapPassword: string;
 }
+export interface EmailConnectionChecks { smtp: boolean; imap: boolean }
 export class EmailService implements Mailer {
   private readonly transport: Transporter;
-  constructor(private readonly config: EmailConfig, transport?: Transporter) {
+  constructor(private readonly config: EmailConfig, transport?: Transporter,
+    private readonly imapFactory: (config: EmailConfig) => ImapFlow = createImapClient) {
     this.transport = transport ?? nodemailer.createTransport({
       host: config.smtpHost, port: config.smtpPort, secure: config.smtpPort === 465,
       requireTLS: config.smtpPort !== 465,
       auth: { user: config.smtpUser, pass: config.smtpPassword },
-      connectionTimeout: 10000, socketTimeout: 15000
+      connectionTimeout: 15000, greetingTimeout: 20000, socketTimeout: 30000
+    });
+  }
+  // Authentication/inbox access checks only: no email sent or flags changed.
+  async verifyConnections(onFailure?: (diagnostic: EmailDiagnostic) => void): Promise<EmailConnectionChecks> {
+    const smtp = async () => {
+      try { await this.transport.verify(); return true; }
+      catch (error) { onFailure?.(diagnoseEmailError('smtp-sign-in', error)); return false; }
+    };
+    const imap = async () => {
+      const client = this.imapFactory(this.config);
+      client.on('error', () => {});
+      try {
+        await client.connect();
+        const lock = await client.getMailboxLock('INBOX');
+        lock.release();
+        return true;
+      } catch (error) { onFailure?.(diagnoseEmailError('imap-inbox', error)); return false; }
+      finally { await client.logout().catch(() => client.close()); }
+    };
+    const [smtpOk, imapOk] = await Promise.all([smtp(), imap()]);
+    return { smtp: smtpOk, imap: imapOk };
+  }
+  async sendSetupTest(recipient: string) {
+    if (!this.config.enabled) throw new Error('Email is disabled');
+    await this.transport.sendMail({
+      from: this.config.from, to: recipient, replyTo: this.config.imapUser,
+      subject: 'Northstar email setup test',
+      text: 'The Northstar application successfully submitted this setup test through SMTP.\n\n' +
+        'SMTP sign-in and IMAP inbox access were verified during setup.\n' +
+        'This is not a temperature alert; replying to this test never controls the fan.\n' +
+        'Future temperature alerts include a [Northstar:...] token. Keep that subject when replying YES or NO.\n' +
+        'A real fan still requires the separate Raspberry Pi controller and verified wiring.\n'
     });
   }
   async send(alert: Alert) {
@@ -32,11 +67,7 @@ export class EmailService implements Mailer {
   }
   async poll(monitor: Monitor) {
     if (!this.config.enabled) { monitor.emailConnected = false; return; }
-    const client = new ImapFlow({
-      host: this.config.imapHost, port: this.config.imapPort, secure: true,
-      auth: { user: this.config.imapUser, pass: this.config.imapPassword },
-      logger: false, socketTimeout: 20000, connectionTimeout: 10000, greetingTimeout: 10000
-    });
+    const client = this.imapFactory(this.config);
     client.on('error', () => { monitor.emailConnected = false; });
     try {
       await client.connect();
@@ -65,4 +96,12 @@ export class EmailService implements Mailer {
     }
   }
   close() { this.transport.close(); }
+}
+
+function createImapClient(config: EmailConfig) {
+  return new ImapFlow({
+    host: config.imapHost, port: config.imapPort, secure: true,
+    auth: { user: config.imapUser, pass: config.imapPassword },
+    logger: false, socketTimeout: 20000, connectionTimeout: 10000, greetingTimeout: 10000
+  });
 }

@@ -19,7 +19,7 @@ flowchart LR
     UI[Existing C# Razor dashboard] <-->|loopback HTTP proxy| T
     T -->|store/fan/set, non-retained| M
     M --> P[Python Pi GPIO actuator]
-    P -->|BCM23 / driver enable| Motor[DC motor]
+    P -->|BCM27 EN1 + BCM17 IN2| Motor[DC motor]
     P -->|store/fan/status, retained heartbeat| M
 ```
 
@@ -38,7 +38,7 @@ Mosquitto is a message router, **not a database**: the TypeScript subscriber is 
 | YES reply starts fan; otherwise no action | IMAP polling, exact first-line YES, sender/alert token/expiry checks; NO never changes fan |
 | Notification after sending email | Persisted `iot_notifications`, refreshed on dashboard every 3 seconds |
 | Fan ON/OFF icon and motor following status | Pi driver output acknowledgements; no optimistic ON; rotating icon after confirmation |
-| Pi controls DC motor through driver | `pi/fan_controller.py`, BCM23 to motor-driver enable |
+| Pi controls DC motor through driver | `pi/fan_controller.py`, L293D EN1 on BCM27 and IN2 on BCM17 |
 | Group task description table / everyone participates | Template below; enter real names and demonstrate each member's work |
 
 **Hardware installation, valid mailbox credentials and a live demonstration are still required.** Tests using a simulated GPIO output are not proof of a wired motor or successful external email delivery.
@@ -51,31 +51,35 @@ Mosquitto is a message router, **not a database**: the TypeScript subscriber is 
 |---|---|
 | DHT11 VCC | ESP32 **3.3 V**, using a 3.3 V-compatible sensor/module |
 | DHT11 GND | ESP32 GND |
-| DHT11 DATA | ESP32 GPIO **4** |
+| DHT11 DATA | Each board's own ESP32 GPIO **26** |
 | Pull-up resistor | **10 kΩ** from DATA to **3.3 V**, unless the module already includes one |
 
 For a bare four-pin DHT11 viewed from its grille/front, verify the datasheet: commonly VCC, DATA, unused, GND left-to-right. Three-pin modules may use a different ordering; follow their labels. Never pull the ESP32 data input up to 5 V. If your sensor requires 5 V, use suitable level shifting instead of connecting its 5 V data line directly.
 
 DHT11 typically measures **0–50 °C** with modest accuracy. It is adequate for this classroom demo, not safety-critical refrigeration or a below-freezing freezer. Use a threshold below room temperature (for example 20 °C) for the demo; 8 °C is the initial software default.
 
-### Raspberry Pi / DC motor (example: L298N module)
+### Raspberry Pi / DC motor (L293D)
 
-The application uses **one shared fan**, matching the diagram and PDF's single motor. An approved alert from either refrigerator requests this fan.
+The application uses **one shared fan**. An approved alert from either refrigerator requests this fan. GPIO numbers below are **BCM numbers**, not header positions.
 
 | Connection | Wiring |
 |---|---|
-| L298N OUT1 / OUT2 | DC motor terminals |
-| Motor supply | Separate supply appropriate for the motor and driver; follow the module's ratings |
-| Driver logic supply | Follow the module's 5 V logic/regulator jumper instructions; do not backfeed Pi power |
-| Driver GND | Common with motor supply GND and Pi GND (physical pin 6) |
-| IN1 | Pi 3.3 V logic (physical pin 1), for fixed forward direction |
-| IN2 | GND |
-| ENA | **Remove ENA jumper**; connect Pi **BCM23 / physical pin 16** |
-| Enable pull-down | **10 kΩ** from ENA to GND to keep motor OFF while Pi boots |
+| L293D OUT1 / OUT2 | DC motor terminals |
+| EN1 | Pi **BCM27 / physical pin 13** (`FAN_GPIO=27`); remove/bypass any always-enabled jumper as the module requires |
+| IN2 | Pi **BCM17 / physical pin 11** (`FAN_IN2_GPIO=17`) |
+| IN1 | GND, held LOW for fixed direction |
+| `+Vmotor` / VCC2 | Suitable motor supply; respect motor/driver voltage and stall-current ratings; **never a GPIO** |
+| Logic VCC1 | Regulated logic supply according to the L293D/module datasheet (typically 5 V) |
+| Driver/motor-supply GND | Common with Pi GND (physical pin 6) |
+| Enable pull-down | **10 kΩ** from EN1 to GND to keep the bridge disabled during boot/shutdown; hold IN2 LOW when undriven too |
 
-Use a module whose ENA accepts 3.3 V logic (L298N uses TTL inputs). Verify its flyback protection and ratings. **Never power a motor directly from a GPIO, never connect motor voltage to the Pi, and do not use the Pi's 5 V pin as the motor supply.** Secure exposed motor blades/shaft. Existing Phase 1 BCM17/27 LEDs and BCM22 buzzer are unchanged; BCM23 does not conflict.
+The L293D accepts 3.3 V TTL control inputs. Verify the actual module labels, current rating and flyback protection. **Never power a motor directly from a GPIO, never connect motor voltage to the Pi, and do not use the Pi's 5 V pin as the motor supply.** Secure exposed motor blades/shaft.
 
-The ON indicator confirms the Pi's GPIO driver output, not measured mechanical rotation. A disconnected/miswired motor cannot be detected without another sensor. Software stops the output on MQTT disconnect, graceful shutdown, reconnect and a configurable run timeout (default 5 minutes). A software process cannot guarantee safety if the OS freezes: use an appropriate driver pull-down and physical power cutoff.
+GPIO17/27 previously belonged to the Phase 1 LEDs. With this mapping, set **`GPIO__ENABLED=false`** so the web app does not open or toggle those pins (this also disables its buzzer). The fan worker rejects conflicts with enabled status GPIO. To retain status LEDs/buzzer, physically relocate their conflicting pins and configure the corresponding `Gpio__...` settings first; do not share GPIO owners.
+
+After physically verifying the wiring, set **`FAN_WIRING_CONFIRMED=true`** in the private `.env`; real GPIO initialization is blocked until confirmed. Startup initializes EN1 LOW before IN2. ON sets IN2 HIGH before enabling EN1; OFF disables EN1 before lowering IN2. The ON indicator confirms these GPIO outputs, **not measured mechanical rotation**. Disconnect, graceful shutdown, reconnect and the configurable timeout (default 5 minutes) force OFF. An OS freeze cannot be made safe by software alone: use the pull-down and physical power cutoff.
+
+For the older enable-only L298N arrangement, use `FAN_GPIO=23`, leave `FAN_IN2_GPIO` empty, tie IN1 HIGH and IN2 LOW as required by that driver, and remove its ENA jumper. Status GPIO can remain enabled only when its pins do not conflict. The motor supply/common-GND and wiring-confirmation requirements still apply.
 
 ## 2. Mosquitto on Raspberry Pi
 
@@ -93,11 +97,11 @@ sudo systemctl restart mosquitto
 sudo systemctl status mosquitto
 ```
 
-Use the same MQTT password in root `.env` and both boards' `secrets.h`. Allow TCP1883 from the ESP32 boards on your private lab LAN. Do not expose this plaintext listener to the public Internet. Use broker TLS and access controls for deployment beyond a trusted classroom network.
+Use the same MQTT password in root `.env` and both boards' `secrets.h`. **`MQTT_URL` is the shared broker endpoint for TypeScript and Python**, including whether TLS is used (`mqtt://` versus `mqtts://`). The Python worker uses legacy `MQTT_HOST`/`MQTT_PORT`/`MQTT_TLS` only when no URL is configured; conflicting legacy flags cannot silently select a different broker/TLS mode. Allow TCP1883 from the ESP32 boards on your private lab LAN. Do not expose this plaintext listener to the public Internet. Use broker TLS and access controls for deployment beyond a trusted classroom network.
 
 ## 3. Configure and start the software
 
-Install **Node.js 20+**, **.NET 8 SDK**, and Python 3. Run commands from the repository root. On this machine, .NET is at `$HOME/.dotnet/dotnet`; add `$HOME/.dotnet` to PATH if needed.
+Install **Node.js 20+**, **.NET 8 SDK**, and Python 3, available on PATH. For a per-user .NET install, add `$DOTNET_ROOT` (or `$HOME/.dotnet`) to PATH. Run commands from the repository root; no particular username or checkout location is required.
 
 ```bash
 cp .env.example .env
@@ -111,7 +115,7 @@ python3 -m venv .venv
 dotnet restore SmartStore.sln
 ```
 
-If `.env` does not include `MONGODB_URI`, the TypeScript service can also load `MONGODB_ENV_FILE` or this Pi's existing `/home/matt/Downloads/atlas-credentials.env`. The C# app supports the existing fallback as before. Explicit process environment variables win. Atlas must allow the Pi's public IP and grant the account `readWrite` on `smart_store` (see Phase 1 README).
+Both web and TypeScript services use the same precedence: **process environment → file named by `MONGODB_ENV_FILE` → repository `.env` → `$XDG_CONFIG_HOME/northstar/credentials.env`** (default `$HOME/.config/northstar/credentials.env`). Files fill missing keys; credentials never depend on another user's home directory. Atlas must allow the server's public IP and grant the account `readWrite` on the configured database (see Phase 1 README).
 
 Start these in **three terminals**, keeping the repository root as the working directory:
 
@@ -126,11 +130,15 @@ npm --prefix iot-server start
 ASPNETCORE_URLS=http://0.0.0.0:5198 dotnet run --no-launch-profile --project src/SmartStore
 ```
 
-Open **`http://PI_IP:5198/Refrigerators`**. No sensor reading is fabricated: cards show waiting/offline until actual telemetry arrives. Readings older than 30 seconds are visibly stale. The TypeScript API listens only on `127.0.0.1:3100`. Keep `IOT_API_KEY` identical for both services. If you change `IOT_PORT`, also set `Iot__BaseUrl=http://127.0.0.1:NEW_PORT/` for C#.
+On the server, open **`http://localhost:5198/Refrigerators`**. Other devices can use the server's DNS/mDNS hostname instead of a fixed IP (for example `http://SERVER_HOSTNAME.local:5198/Refrigerators`, when local hostname resolution is available). No sensor reading is fabricated: cards show waiting/offline until actual telemetry arrives. Readings older than 30 seconds are visibly stale. The TypeScript API listens only on `127.0.0.1:3100`. Keep `IOT_API_KEY` identical for both services. If you change `IOT_PORT`, also set `Iot__BaseUrl=http://127.0.0.1:NEW_PORT/` for C#.
 
 For a non-hardware test, run the fan worker with **`FAN_SIMULATE=true`**. The dashboard explicitly labels SIMULATION. Do not leave this enabled for the physical lab demonstration. Real GPIO initialization failure stops the worker rather than pretending the motor is running. The user needs GPIO permissions (`sudo usermod -aG gpio "$USER"`, then sign out/in).
 
 ### Email setup
+
+**Recommended: [guided Gmail setup and the short manual checklist](EMAIL_SETUP.md).** Run `npm --prefix iot-server run setup:email`: it fills provider settings, masks the app password, checks SMTP/IMAP, submits a labelled test, saves private configuration and restarts this checkout's managed IoT service when permitted. `npm --prefix iot-server run check:email` is a read-only diagnostic. Google login/2-Step Verification/app-password approval and checking the recipient inbox still require you. Setup never enables the physical fan controller.
+
+For manual configuration or another SMTP/IMAP provider:
 
 1. Use a dedicated SMTP/IMAP mailbox with provider-approved app passwords. Fill `SMTP_*`, `IMAP_*`, `SMTP_FROM` and **`ALERT_TO`** in `.env`.
 2. SMTP port587 uses STARTTLS; port465 uses TLS. IMAP uses TLS on port993. Enable IMAP in the provider if required.
@@ -147,15 +155,25 @@ Mailbox polling trusts the configured provider's delivery and sender headers, no
 
 ```bash
 cp firmware/FridgeSensor/secrets.example.h firmware/FridgeSensor/secrets.h
-# Set WiFi, Pi LAN IP, broker user/password, and FRIDGE_TOPIC="Frig1".
+chmod 600 firmware/FridgeSensor/secrets.h
+# Set the same 2.4 GHz WiFi and MQTT credentials for both boards.
+# Leave MQTT_HOST="" for automatic broker discovery (no server IP to maintain).
 arduino-cli core install esp32:esp32
 arduino-cli lib install "DHT sensor library" "Adafruit Unified Sensor" "PubSubClient"
 arduino-cli board list
-arduino-cli compile --fqbn esp32:esp32:esp32 firmware/FridgeSensor
-arduino-cli upload --fqbn esp32:esp32:esp32 --port /dev/ttyUSB0 firmware/FridgeSensor
+./firmware/flash-sensor.sh Frig1 /dev/ttyUSB0
+./firmware/flash-sensor.sh Frig2 /dev/ttyUSB1
 ```
 
-Use your actual ESP32 board FQBN/serial port from `arduino-cli board list`. For the second board, change **only** `FRIDGE_TOPIC` to **`Frig2`**, then compile/upload to that board. In Arduino IDE, install the same ESP32 core/libraries and open `FridgeSensor.ino`. Serial output is 115200 baud. WiFi/MQTT reconnect automatically; failed DHT reads are not published.
+The helper builds separate `Frig1`/`Frig2` binaries with **GPIO26** for both DHT11 data pins, using one shared, untracked credentials file. The server already subscribes to both case-sensitive topics and keeps their readings and thresholds separate. USB port names can change after unplugging: check which physical board you are flashing. Override the default generic ESP32 FQBN if needed, e.g. `FQBN=esp32:esp32:esp32doit-devkit-v1 ./firmware/flash-sensor.sh Frig1 /dev/ttyUSB0`.
+
+In Arduino IDE, install the same ESP32 core/libraries and open `FridgeSensor.ino`. Set its default `FRIDGE_TOPIC` to `Frig1` for the first board and `Frig2` for the second, then upload each; leave `DHT_PIN` at **26**. Close the serial monitor before CLI uploading. Serial output is 115200 baud and reports the topic, data pin, board IP, broker IP and MQTT error state. WiFi/MQTT reconnect automatically; failed DHT reads are not published.
+
+Both ESP32s and the server must join the **same LAN**, with **2.4 GHz available for these classic ESP32s** and client-to-client traffic allowed. On a phone hotspot, enable its 2.4 GHz/compatibility mode (on iPhone: **Personal Hotspot → Maximize Compatibility**). A 5 GHz-only hotspot is invisible to these boards even if the server can connect to it.
+
+The IoT service advertises the local broker as **`_northstar-mqtt._tcp.local`** using mDNS. Firmware discovers its address and port, and re-discovers after connection loss; **DHCP/IP changes do not require reflashing**. Allow multicast UDP5353 and the broker's TCP port (default 1883). `MQTT_DISCOVERY_ENABLED=false` disables advertisement. Automatic discovery supports a plain MQTT broker on the same computer as the IoT service; remote/TLS brokers are not incorrectly advertised as local. On networks blocking multicast, or with several independent Northstar servers, set `MQTT_HOST` once to the intended broker's stable DNS/mDNS hostname instead. Use a trusted LAN and authenticated broker: discovery is not authentication and never broadcasts credentials.
+
+WiFi/MQTT credential changes still require updating the private `secrets.h` and reflashing. No fan worker is needed to receive sensor readings. Keep generated binaries under the ignored `firmware/build/` directory: they contain embedded credentials.
 
 Example on-wire data:
 
@@ -212,13 +230,14 @@ Lab demonstration (all group members participate):
 
 ## Optional boot services
 
-The templates in `pi/systemd/` use this Pi's user `matt` and current repository path. **Review and edit User, WorkingDirectory and ExecStart for your installation.** `node` must resolve to Node20+ under systemd (use the absolute path from `command -v node`, not an interactive shell-only PATH). Do not enable services until the terminal setup works.
+The templates in `pi/systemd/` contain placeholders, not a particular user's paths. Run the installer **as your normal service user**: it discovers this checkout, your Node/.NET/Python executables and username, then requests sudo only to install rendered units. It does not enable any service or drive GPIO. Re-run it if you move the checkout or change runtime locations. Do not enable services until the terminal setup works.
 
 ```bash
 dotnet publish src/SmartStore/SmartStore.csproj -c Release -o publish/web
-sudo cp pi/systemd/northstar-*.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now northstar-iot northstar-fan northstar-web
+./pi/install-services.sh
+sudo systemctl enable --now mosquitto northstar-iot northstar-web
+# Only after verifying motor wiring:
+# sudo systemctl enable --now northstar-fan
 journalctl -u northstar-iot -u northstar-fan -u northstar-web -f
 ```
 

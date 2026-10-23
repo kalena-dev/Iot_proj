@@ -31,7 +31,16 @@ export class Monitor {
       const reading = await this.repo.latestReading(id);
       if (reading) this.readings.set(id, reading);
       const alert = await this.repo.latestAlert(id);
-      if (alert) this.alerts.set(id, alert);
+      if (alert && alert.recipient.toLowerCase() === this.options.recipient.trim().toLowerCase()) {
+        this.alerts.set(id, alert);
+      } else if (alert && !alert.decision) {
+        // Never send a queued alert to an old/placeholder recipient after setup,
+        // or accept that recipient's old YES after approval access changes.
+        alert.decision = 'NO';
+        alert.decidedAt = this.iso();
+        await this.repo.saveAlert(alert);
+        await this.notify('email', `${id}: previous approval cancelled because the alert recipient changed. Fan unchanged.`, id);
+      }
     }
   }
   private iso() { return new Date(this.now()).toISOString(); }
@@ -74,7 +83,7 @@ export class Monitor {
     if (previous && this.now() - Date.parse(previous.createdAt) < this.options.cooldownSeconds * 1000) return;
     if (previous && !previous.decision && Date.parse(previous.expiresAt) > this.now()) return;
     const alert: Alert = { _id: randomUUID(), fridge, temperature: reading.temperature, threshold,
-      recipient: this.options.recipient.toLowerCase(), createdAt: this.iso(),
+      recipient: this.options.recipient.trim().toLowerCase(), createdAt: this.iso(),
       expiresAt: new Date(this.now() + this.options.replyExpirySeconds * 1000).toISOString(), emailState: 'pending' };
     await this.repo.saveAlert(alert);
     this.alerts.set(fridge, alert);

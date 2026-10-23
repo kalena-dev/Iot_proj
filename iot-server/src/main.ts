@@ -1,7 +1,4 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
-import dotenv from 'dotenv';
 import express from 'express';
 import mqtt from 'mqtt';
 import { MongoClient } from 'mongodb';
@@ -9,18 +6,17 @@ import { z } from 'zod';
 import { EmailService } from './email.js';
 import { Monitor } from './monitor.js';
 import { MongoRepository } from './repository.js';
+import { advertiseBroker } from './discovery.js';
+import { loadConfiguration } from './configuration.js';
 import { fridgeIds, fanCommandSchema, thresholdSchema, type FridgeId } from './model.js';
 
-// Match the existing C# app: real environment variables win over .env files.
-for (const path of [resolve('.env'), resolve('../.env'), process.env.MONGODB_ENV_FILE,
-  '/home/matt/Downloads/atlas-credentials.env']) {
-  if (path && existsSync(path)) dotenv.config({ path, override: false, quiet: true });
-}
+const environment = loadConfiguration();
 const number = (fallback: number) => z.coerce.number().int().positive().default(fallback);
 const env = z.object({
   MONGODB_URI: z.string().min(1), MONGODB_DATABASE: z.string().default('smart_store'),
   MQTT_URL: z.string().url().default('mqtt://127.0.0.1:1883'),
   MQTT_USER: z.string().default(''), MQTT_PASSWORD: z.string().default(''),
+  MQTT_DISCOVERY_ENABLED: z.enum(['true', 'false']).default('true'),
   IOT_PORT: number(3100), IOT_API_KEY: z.string().default(''),
   DEFAULT_THRESHOLD: z.coerce.number().min(0).max(50).default(8),
   SENSOR_STALE_SECONDS: number(30), ALERT_COOLDOWN_SECONDS: number(900),
@@ -30,7 +26,7 @@ const env = z.object({
   SMTP_PORT: number(587), SMTP_USER: z.string().default(''), SMTP_PASSWORD: z.string().default(''),
   SMTP_FROM: z.string().default(''), IMAP_HOST: z.string().default(''),
   IMAP_PORT: number(993), IMAP_USER: z.string().default(''), IMAP_PASSWORD: z.string().default('')
-}).safeParse(process.env);
+}).safeParse(environment);
 if (!env.success) {
   console.error('Missing/invalid configuration keys:', env.error.issues.map(issue => issue.path.join('.')).join(', '));
   process.exit(1);
@@ -38,7 +34,7 @@ if (!env.success) {
 const config = env.data;
 if (config.EMAIL_ENABLED === 'true' && (!z.string().email().safeParse(config.ALERT_TO).success
   || !z.string().email().safeParse(config.SMTP_FROM).success
-  || !['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASSWORD'].every(k => process.env[k]))) {
+  || !['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASSWORD'].every(k => environment[k]))) {
   console.error('Email enabled but SMTP, IMAP or recipient configuration is incomplete.');
   process.exit(1);
 }
@@ -118,6 +114,8 @@ app.use((_error: unknown, _req: express.Request, res: express.Response, _next: e
 });
 // Only the existing Razor app accesses this API; do not expose it to the LAN.
 const server = app.listen(config.IOT_PORT, '127.0.0.1', () => console.log(`IoT service listening on 127.0.0.1:${config.IOT_PORT}`));
+const stopDiscovery = config.MQTT_DISCOVERY_ENABLED === 'true'
+  ? advertiseBroker(config.MQTT_URL) : async () => {};
 let polling = false;
 const poll = async () => {
   if (polling) return;
@@ -130,7 +128,7 @@ const timer = setInterval(() => { void poll(); }, 10000);
 void poll();
 async function stop() {
   clearInterval(timer); server.close(); mailer.close();
-  await broker.endAsync(); await mongo.close(); process.exit(0);
+  await stopDiscovery(); await broker.endAsync(); await mongo.close(); process.exit(0);
 }
 process.once('SIGINT', () => { void stop(); });
 process.once('SIGTERM', () => { void stop(); });

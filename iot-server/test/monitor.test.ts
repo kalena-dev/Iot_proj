@@ -119,6 +119,23 @@ test('offline fan, stale ON acknowledgement and command timeout cannot report fa
   assert.ok(f.repo.notices.some(n => n.message.includes('timed out')));
 });
 
+test('recipient changes cancel old approvals and never send queued mail to the previous recipient', async () => {
+  for (const emailState of ['pending', 'sent'] as const) {
+    const f = await fixture();
+    await f.monitor.ingest('Frig1', reading(22));
+    const token = f.subject();
+    f.repo.alerts[0].recipient = 'previous@recipient.test';
+    f.repo.alerts[0].emailState = emailState;
+    const restarted = await fixture(f.repo);
+    assert.equal(f.repo.alerts[0].decision, 'NO');
+    assert.equal(await restarted.monitor.reply('previous@recipient.test', token, 'YES'), 'ignored');
+    await restarted.monitor.ingest('Frig1', reading(23));
+    assert.equal(restarted.emails.length, 1);
+    assert.equal(restarted.emails[0].recipient, 'owner@example.com');
+    assert.equal(restarted.commands.length, 0);
+  }
+});
+
 test('reject invalid thresholds and failed publication leaves no pending command', async () => {
   const f = await fixture();
   await assert.rejects(f.monitor.setThreshold('Frig1', NaN));

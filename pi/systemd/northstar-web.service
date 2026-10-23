@@ -5,10 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=matt
-WorkingDirectory=/home/matt/Downloads/Iot_proj-main
+# Render these placeholders with pi/install-services.sh.
+User=@USER@
+WorkingDirectory=@PROJECT_ROOT@/publish/web
 Environment=ASPNETCORE_URLS=http://0.0.0.0:5198
-ExecStart=/home/matt/.dotnet/dotnet /home/matt/Downloads/Iot_proj-main/publish/web/SmartStore.dll
+ExecStart="@DOTNET@" "@PROJECT_ROOT@/publish/web/SmartStore.dll"
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

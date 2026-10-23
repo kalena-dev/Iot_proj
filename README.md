@@ -6,7 +6,7 @@ A C#/.NET 8 IoT application for the Vanier College **420-521-VA** final project.
 
 **[Complete lab setup, wiring, architecture, requirement checklist and task table →](docs/PHASE2.md)**
 
-The existing store now includes `/Refrigerators`: four live temperature/humidity gauges, independent MongoDB-backed thresholds, email alerts and YES-reply approval, system notifications, and an acknowledged Raspberry Pi motor output. The TypeScript MQTT service matches the supplied draw.io architecture; both ESP32 boards publish DHT11 measurements on `Frig1` and `Frig2`.
+The existing store now includes `/Refrigerators`: four live temperature/humidity gauges, independent MongoDB-backed thresholds, email alerts and YES-reply approval, system notifications, and an acknowledged Raspberry Pi motor output. The TypeScript MQTT service matches the supplied draw.io architecture; both ESP32 boards publish DHT11 measurements on `Frig1` and `Frig2`, using each board's **GPIO26**. Boards automatically discover the local MQTT broker over mDNS, so server IP changes do not require reflashing. Classic ESP32s require **2.4 GHz WiFi**.
 
 New components: `iot-server/` (TypeScript MQTT/MongoDB/SMTP/IMAP), `firmware/FridgeSensor/` (ESP32 sketch), and `pi/` (motor driver adapter and deployment templates). Real sensors, motor wiring and SMTP/IMAP credentials must be configured for the lab. Simulation is explicitly labeled and never presented as physical motor operation.
 
@@ -55,7 +55,9 @@ The application creates these indexes before the first insert:
 
 ## Breadboard wiring (Raspberry Pi 5)
 
-The configured numbers are **BCM GPIO numbers**, not header positions. The GPIO output code drives only the two LEDs and buzzer; it does not read or power an RFID reader. A kit's wiring must match the GPIO numbers below.
+The configured numbers are **BCM GPIO numbers**, not header positions. The Phase 1 GPIO output code drives only the two LEDs and buzzer; it does not read or power an RFID reader. A kit's wiring must match the GPIO numbers below.
+
+**Phase 2 L293D fan:** GPIO27 is now EN1 and GPIO17 is IN2. Set `GPIO__ENABLED=false` to disable these old status outputs; never let the LED code and fan controller share the pins. See [the L293D wiring and configuration](docs/PHASE2.md#raspberry-pi--dc-motor-l293d).
 
 | Component | GPIO | Physical pin | Connection |
 |---|---:|---:|---|
@@ -78,7 +80,7 @@ Set `Gpio:BuzzerMode` to `Passive` (default) for the kit's passive buzzer; it us
    MONGODB_URI="mongodb+srv://USERNAME:PASSWORD@CLUSTER.mongodb.net"
    ```
 
-The repository's local `.env` is ignored by Git. On this Pi, the app also loads `/home/matt/Downloads/atlas-credentials.env` automatically if there is no local `.env`. You can override this with `MONGODB_ENV_FILE` set to another file's absolute path. Real environment variables take precedence over file values. Credentials stay outside the compiled app.
+The repository's local `.env` is ignored by Git. Both services load configuration in this order: process environment, the file named by `MONGODB_ENV_FILE` (if set), repository `.env`, then `$XDG_CONFIG_HOME/northstar/credentials.env` (default `$HOME/.config/northstar/credentials.env`). Earlier values win. No particular username or checkout location is required. Credentials stay outside the compiled app.
 
 ## Run on a development computer
 

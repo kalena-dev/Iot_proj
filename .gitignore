@@ -17,6 +17,9 @@ appsettings.Local.json
 .DS_Store
 Thumbs.db
 
+# Private agent/chat session exports (may contain local setup details)
+pi-session-*.html
+
 # Publish output
 publish/
 

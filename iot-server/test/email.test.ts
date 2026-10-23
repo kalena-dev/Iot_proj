@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import nodemailer, { type SendMailOptions } from 'nodemailer';
+import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
+import type { ImapFlow } from 'imapflow';
 import { EmailService, type EmailConfig } from '../src/email.js';
 import type { Alert } from '../src/model.js';
+import type { EmailDiagnostic } from '../src/email-diagnostics.js';
 
 const config: EmailConfig = { enabled: true, smtpHost: 'smtp.example.com', smtpPort: 587,
   smtpUser: 'alerts@example.com', smtpPassword: 'test-only', from: 'alerts@example.com',
@@ -33,6 +35,41 @@ test('disabled email never sends through the transport', async () => {
   transport.use('compile', (_mail, done) => { sent = true; done(); });
   const service = new EmailService({ ...config, enabled: false }, transport);
   await assert.rejects(service.send(alert), /disabled/);
+  await assert.rejects(service.sendSetupTest('owner@example.com'), /disabled/);
   assert.equal(sent, false);
   service.close();
 });
+
+test('setup test message is not an actionable temperature approval', async () => {
+  const transport = nodemailer.createTransport({ streamTransport: true, buffer: true });
+  let message: SendMailOptions | undefined;
+  transport.use('compile', (mail, done) => { message = mail.data; done(); });
+  const service = new EmailService(config, transport);
+  await service.sendSetupTest('owner@example.com');
+  assert.equal(message!.to, 'owner@example.com');
+  assert.equal(message!.replyTo, config.imapUser);
+  assert.doesNotMatch(message!.subject!, /\[Northstar:/);
+  assert.match(String(message!.text), /replying to this test never controls the fan/);
+  service.close();
+});
+
+for (const smtpOk of [true, false]) for (const imapOk of [true, false]) {
+  test(`connection checks report SMTP=${smtpOk}, IMAP=${imapOk}, with no email or flag changes`, async () => {
+    let sent = false, released = false, loggedOut = false;
+    const transport = { async verify() { if (!smtpOk) throw new Error('test auth failure'); return true; },
+      async sendMail() { sent = true; }, close() {} } as unknown as Transporter;
+    const client = { on() {}, async connect() { if (!imapOk) throw new Error('test auth failure'); },
+      async getMailboxLock() { return { release() { released = true; } }; },
+      async logout() { loggedOut = true; }, close() {} } as unknown as ImapFlow;
+    const service = new EmailService(config, transport, () => client);
+    const errors: EmailDiagnostic[] = [];
+    assert.deepEqual(await service.verifyConnections(error => errors.push(error)), { smtp: smtpOk, imap: imapOk });
+    assert.equal(errors.length, Number(!smtpOk) + Number(!imapOk));
+    assert.equal(errors.some(error => error.stage === 'smtp-sign-in'), !smtpOk);
+    assert.equal(errors.some(error => error.stage === 'imap-inbox'), !imapOk);
+    assert.equal(sent, false);
+    assert.equal(released, imapOk);
+    assert.equal(loggedOut, true);
+    service.close();
+  });
+}

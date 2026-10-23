@@ -30,7 +30,7 @@ test('isolated Mosquitto: two sensor topics → alerts → YES → Pi acknowledg
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const piPath = fileURLToPath(new URL('../../../pi/fan_controller.py', import.meta.url));
   const actuator = spawn('python3', [piPath], { cwd: root,
-    env: { ...process.env, MQTT_HOST: '127.0.0.1', MQTT_PORT: String(port), MQTT_USER: '', MQTT_PASSWORD: '',
+    env: { ...process.env, MQTT_URL: `mqtt://127.0.0.1:${port}`, MQTT_HOST: '127.0.0.1', MQTT_PORT: String(port), MQTT_USER: '', MQTT_PASSWORD: '',
       MQTT_TLS: 'false', FAN_SIMULATE: 'true', FAN_MAX_RUN_SECONDS: '30' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let actuatorLog = '';
   actuator.stdout.on('data', data => { actuatorLog += data; });

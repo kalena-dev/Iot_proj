@@ -5,10 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=matt
+# Render these placeholders with pi/install-services.sh.
+User=@USER@
 SupplementaryGroups=gpio
-WorkingDirectory=/home/matt/Downloads/Iot_proj-main
-ExecStart=/home/matt/Downloads/Iot_proj-main/.venv/bin/python pi/fan_controller.py
+WorkingDirectory=@PROJECT_ROOT@
+ExecStart="@PYTHON@" "@PROJECT_ROOT@/pi/fan_controller.py"
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
