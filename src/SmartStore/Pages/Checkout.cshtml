@@ -12,6 +12,11 @@
 {
     <div class="notice @(Model.MessageKind == "success" ? "notice--success" : "notice--error")" role="alert"><div><strong>@(Model.MessageKind == "success" ? "Checkout complete" : "Checkout unsuccessful")</strong><p>@Model.Message</p></div></div>
 }
+@if (Model.ReceiptId is not null)
+{
+    <p><a asp-page="/Receipt" asp-route-id="@Model.ReceiptId">View / print your receipt</a></p>
+}
+<p><a asp-page="/PurchaseHistory">View purchase history</a></p>
 <div class="workspace">
     <section class="panel form-panel">
         <div class="panel__heading"><h2>Scan items</h2></div>
@@ -22,6 +27,8 @@
         <p class="demo-total">Total: <strong id="cart-total">$0.00</strong></p>
         <form method="post" id="checkout-form">
             <input type="hidden" asp-for="Cart" />
+            <label for="CustomerEmail">Registered customer email (optional)</label>
+            <input asp-for="CustomerEmail" type="email" maxlength="254" placeholder="Guest checkout if blank" />
             <label for="PaymentResult">Demo payment</label>
             <select asp-for="PaymentResult"><option value="approve">Approve (test success)</option><option value="decline">Decline (test failure)</option></select>
             <button type="submit" class="primary-button" id="checkout-button" disabled>Complete demo checkout</button>

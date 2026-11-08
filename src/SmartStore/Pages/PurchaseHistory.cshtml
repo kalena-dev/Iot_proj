@@ -1,0 +1,20 @@
+@page
+@model SmartStore.Pages.PurchaseHistoryModel
+@{ ViewData["Title"] = "Purchase history"; }
+<h1>Purchase history</h1>
+<p>Classroom demo only: enter a registered email to find transactions. This page does not authenticate customers and must be protected before production use.</p>
+<form method="get"><label for="Email">Customer email</label>
+<input id="Email" name="Email" type="email" value="@Model.Email" required />
+<button type="submit">Search</button></form>
+@if (!string.IsNullOrWhiteSpace(Model.Email))
+{
+    <table class="table"><thead><tr><th>Date (UTC)</th><th>Payment</th><th>Total</th><th>Points</th><th>Receipt</th></tr></thead><tbody>
+    @foreach (var sale in Model.Sales)
+    {
+        <tr><td>@sale.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td><td>@sale.PaymentStatus</td>
+        <td>$@sale.Total.ToString("F2")</td><td>@sale.PointsEarned</td>
+        <td>@if (sale.PaymentStatus == "approved") { <a asp-page="/Receipt" asp-route-id="@sale.Id">View receipt</a> }</td></tr>
+    }
+    </tbody></table>
+    @if (Model.Sales.Count == 0) { <p>No purchases found.</p> }
+}
