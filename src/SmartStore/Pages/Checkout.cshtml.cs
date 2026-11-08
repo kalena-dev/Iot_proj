@@ -13,8 +13,6 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
     [BindProperty] public string CustomerEmail { get; set; } = "";
     [TempData] public string? ReceiptId { get; set; }
     [TempData] public string? Message { get; set; }
-    [BindProperty] public string CustomerEmail { get; set; } = "";
-    [TempData] public string? ReceiptId { get; set; }
     [TempData] public string? MessageKind { get; set; }
 
     public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
