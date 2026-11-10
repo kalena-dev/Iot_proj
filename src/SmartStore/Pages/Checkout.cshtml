@@ -1,52 +1,70 @@
 @page
 @model CheckoutModel
 @{
-    ViewData["Title"] = "Self-checkout demo";
+    ViewData["Title"] = "Self-checkout";
 }
-<section class="hero"><div class="hero__copy">
-    <span class="eyebrow">Customer side · classroom demo</span>
-    <h1>Self-checkout</h1>
-    <p>Type an item code or scan one with a keyboard-style barcode scanner. Payment is simulated: no cards or money are involved.</p>
-</div></section>
-@if (Model.Message is not null)
-{
-    <div class="notice @(Model.MessageKind == "success" ? "notice--success" : "notice--error")" role="alert"><div><strong>@(Model.MessageKind == "success" ? "Checkout complete" : "Checkout unsuccessful")</strong><p>@Model.Message</p></div></div>
-}
-@if (Model.ReceiptId is not null)
-{
-    <p><a asp-page="/Receipt" asp-route-id="@Model.ReceiptId">View / print your receipt</a></p>
-}
-<p><a asp-page="/PurchaseHistory">View purchase history</a></p>
-<div class="workspace">
-    <section class="panel form-panel">
-        <div class="panel__heading"><h2>Scan items</h2></div>
-        <div class="demo-scan"><label for="item-code">Item code</label><input id="item-code" inputmode="numeric" autocomplete="off" placeholder="Try 1001" autofocus /><button type="button" class="primary-button" id="add-item">Add item</button></div>
-        <p id="scan-error" role="alert" class="field-error"></p>
-        <h2>Your cart</h2>
-        <div id="cart-list" aria-live="polite">No items yet.</div>
-        <p class="demo-total">Total: <strong id="cart-total">$0.00</strong></p>
-        <form method="post" id="checkout-form">
-            <input type="hidden" asp-for="Cart" />
-            <label for="CustomerEmail">Registered customer email (optional)</label>
-            <input asp-for="CustomerEmail" type="email" maxlength="254" placeholder="Guest checkout if blank" />
-            <label for="PaymentResult">Demo payment</label>
-            <select asp-for="PaymentResult"><option value="approve">Approve (test success)</option><option value="decline">Decline (test failure)</option></select>
-            <button type="submit" class="primary-button" id="checkout-button" disabled>Complete demo checkout</button>
-        </form>
-    </section>
-    <aside class="sidebar"><section class="panel status-panel">
-        <div class="panel__heading"><h2>Sample items</h2></div>
-        <p>Click an item or type its code. A barcode scanner that types the same code and presses Enter also works.</p>
-        <div class="demo-products">
-        @foreach (var item in Model.Products)
-        {
-            <button type="button" class="demo-product" data-code="@item.Code" data-name="@item.Name" data-price="@item.Price.ToString(System.Globalization.CultureInfo.InvariantCulture)" data-stock="@item.Stock">
-                <strong>@item.Name</strong><span>Code @item.Code · $@item.Price.ToString("F2") · @item.Stock left</span>
-            </button>
-        }
+<div class="checkout-page">
+    <header class="checkout-heading">
+        <div><span class="checkout-kicker">SMART STORE · SELF SERVICE</span><h1>Self-checkout</h1>
+        <p>Scan or select your items, review your cart, and simulate a payment.</p></div>
+        <span class="checkout-demo-label">Demo mode · No real charges</span>
+    </header>
+
+    <div class="checkout-layout">
+        <section class="checkout-card checkout-cart" aria-label="Shopping cart">
+            <div class="checkout-card-head"><div><span class="checkout-step">01 / SHOPPING CART</span><h2>Your cart</h2></div><span class="checkout-chip">Ready to scan</span></div>
+            <div class="checkout-scan"><label for="item-code">Product code</label><div class="checkout-scan-line"><input id="item-code" inputmode="numeric" autocomplete="off" placeholder="Enter a code, e.g. 1001" autofocus /><button type="button" class="primary-button" id="add-item">Add item</button></div></div>
+            <p id="scan-error" role="alert" class="field-error"></p>
+            <div id="cart-list" class="checkout-cart-list" aria-live="polite">No items yet.</div>
+            <div class="checkout-total"><span>Order total</span><strong id="cart-total">$0.00</strong></div>
+            <form method="post" id="checkout-form" class="checkout-form">
+                <input type="hidden" asp-for="Cart" />
+                <label for="CustomerEmail">Registered customer email <span>(optional · required for points)</span></label>
+                <input asp-for="CustomerEmail" type="email" maxlength="254" placeholder="Enter registered email to earn points" />
+                <p class="checkout-points-note">Points require a registered customer email. Guest checkout earns 0 points.</p>
+                <label for="PaymentResult">Simulated payment</label>
+                <select asp-for="PaymentResult"><option value="approve">Approve payment</option><option value="decline">Decline payment</option></select>
+                <button type="submit" class="primary-button checkout-submit" id="checkout-button" disabled>Complete checkout</button>
+            </form>
+        </section>
+
+        <aside class="checkout-card checkout-result" aria-label="Checkout and records">
+            <div class="checkout-card-head"><div><span class="checkout-step">02 / TRANSACTION</span><h2>Checkout details</h2></div></div>
+            @if (Model.Message is not null)
+            {
+                <div class="checkout-feedback @(Model.MessageKind == "success" ? "checkout-feedback--success" : "checkout-feedback--error")" role="status">
+                    <strong>@(Model.MessageKind == "success" ? "✓ Checkout complete" : "Checkout not completed")</strong>
+                    <p>@Model.Message</p>
+                </div>
+            }
+            else
+            {
+                <div class="checkout-awaiting"><span class="checkout-awaiting-icon">✓</span><strong>Ready when you are</strong><p>Your payment result and receipt will appear here.</p></div>
+            }
+            <div class="checkout-record-actions">
+                <button type="button" id="show-receipt" class="checkout-action" data-receipt-id="@Model.ReceiptId" @(string.IsNullOrEmpty(Model.ReceiptId) ? "disabled" : null)><span>▤</span><span><strong>View receipt</strong><small>See itemized transaction</small></span><span class="checkout-chevron">›</span></button>
+                <button type="button" id="show-history" class="checkout-action"><span>◷</span><span><strong>Purchase history</strong><small>Find previous transactions</small></span><span class="checkout-chevron">›</span></button>
+            </div>
+            <div id="checkout-detail" class="checkout-detail" hidden>
+                <div class="checkout-detail-head"><h3 id="checkout-detail-title">Details</h3><button type="button" id="close-checkout-detail" aria-label="Close details">×</button></div>
+                <div id="checkout-detail-body"></div>
+            </div>
+            <p class="checkout-footnote">Test payments only. Receipts are emailed when configured.</p>
+        </aside>
+    </div>
+
+    <section class="checkout-card checkout-samples" aria-label="Sample products">
+        <div class="checkout-samples-head"><div><span class="checkout-step">QUICK ADD</span><h2>Sample products</h2><p>Select a product to add it to your cart.</p></div>
+        <div class="checkout-pagination"><span id="sample-page-label" aria-live="polite">Page 1</span><button type="button" id="samples-prev" aria-label="Previous sample page">‹</button><button type="button" id="samples-next" aria-label="Next sample page">›</button></div></div>
+        <div class="checkout-sample-grid" id="sample-grid">
+            @foreach (var item in Model.Products)
+            {
+                <button type="button" class="demo-product checkout-sample" data-code="@item.Code" data-name="@item.Name" data-price="@item.Price.ToString(System.Globalization.CultureInfo.InvariantCulture)" data-stock="@item.Stock" @(item.Stock == 0 ? "disabled" : null)>
+                    <span class="checkout-sample-top"><span class="checkout-sample-symbol">@item.Name.Substring(0, 1).ToUpperInvariant()</span><span class="checkout-sample-add">+</span></span>
+                    <strong>@item.Name</strong><span class="checkout-sample-price">$@item.Price.ToString("F2")</span><span class="checkout-sample-meta">#@item.Code · @item.Stock in stock</span>
+                </button>
+            }
         </div>
-        <p>Successful checkout: blue LED. Declined payment or failed checkout: red LED + buzzer. Unknown codes show an on-screen message.</p>
-        <a asp-page="/Management">View management dashboard →</a>
-    </section></aside>
+    </section>
 </div>
 @section Scripts { <script src="~/js/checkout.js" asp-append-version="true"></script> }

@@ -41,6 +41,9 @@ public sealed class StoreDemo
         _customers = db.GetCollection<SmartStore.Models.Customer>(options.Value.CustomersCollectionName);
     }
 
+    public Task<DemoSale?> FindSaleAsync(string id, CancellationToken cancellationToken) =>
+        _sales.Find(s => s.Id == id).FirstOrDefaultAsync(cancellationToken);
+
     public IReadOnlyList<DemoProduct> Products
     {
         get

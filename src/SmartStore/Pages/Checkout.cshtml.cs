@@ -15,6 +15,28 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
     [TempData] public string? Message { get; set; }
     [TempData] public string? MessageKind { get; set; }
 
+    // Classroom-only inline lookup endpoints; require authentication before production use.
+    public async Task<IActionResult> OnGetReceiptAsync(string id, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 40) return BadRequest();
+        var sale = await store.FindSaleAsync(id, cancellationToken);
+        if (sale is null || sale.PaymentStatus != "approved") return NotFound();
+        return new JsonResult(new { receipt = emailService.FormatReceipt(sale) });
+    }
+
+    public async Task<IActionResult> OnGetHistoryAsync(string email, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(email) || email.Length > 254 ||
+            !System.Net.Mail.MailAddress.TryCreate(email, out var address) ||
+            !string.Equals(address.Address, email, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "Enter a valid customer email." });
+        var sales = await store.CustomerHistoryAsync(email.Trim(), cancellationToken);
+        return new JsonResult(sales.Select(s => new {
+            id = s.Id, date = s.CreatedAtUtc, status = s.PaymentStatus,
+            total = s.Total, points = s.PointsEarned
+        }));
+    }
+
     public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
     {
         try
@@ -37,7 +59,7 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
                 if (sale.EmailStatus == "pending")
                     await store.UpdateEmailStatusAsync(sale.Id, emailSent ? "sent" : "failed", cancellationToken);
                 Message = $"Payment approved! Receipt {sale.Id[..8]} — ${sale.Total:F2}. Points: {sale.PointsEarned}. " +
-                    (sale.CustomerEmail is null ? "Guest checkout." : emailSent ? "Receipt emailed." : "Email not sent; receipt is available below.");
+                    (sale.CustomerEmail is null ? "Guest checkout · no loyalty points earned." : emailSent ? "Receipt emailed." : "Email not sent; receipt is available below.");
                 MessageKind = "success";
             }
         }
