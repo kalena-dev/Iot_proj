@@ -17,6 +17,7 @@
   const cart = {};
 
   const codeInput = document.querySelector('#item-code');
+  const scanMode = document.querySelector('#scan-mode');
   const error = document.querySelector('#scan-error');
   const list = document.querySelector('#cart-list');
   const total = document.querySelector('#cart-total');
@@ -36,8 +37,8 @@
       Array.from({ length: Math.min(index === 0 ? 2 : 1, product.stock) },
         (_, unit) => ({ epc: `DEMO-${code}-${unit}`, code })));
 
-  // Keep track of which physical RFID tags are in the cart
-  const scannedTags = new Map();
+  // Keep seen tags for this page session, including items the customer removes.
+  const seenRfidTags = new Set();
 
   // Display the shopping cart
   function render() {
@@ -70,16 +71,11 @@
           delete cart[code];
         }
 
-        // If this item came from RFID, release one associated EPC.
-        for (const [epc, tagCode] of scannedTags) {
-          if (tagCode === code) {
-            scannedTags.delete(epc);
-            break;
-          }
-        }
+        // Do not forget the tag: a reader still seeing it must not undo removal.
 
         error.textContent = '';
         render();
+        codeInput.focus();
       });
 
       row.append(name, remove);
@@ -133,17 +129,41 @@
     return true;
   }
 
-  // Manual barcode input
-  document.querySelector('#add-item').addEventListener(
-    'click',
-    () => add(codeInput.value)
-  );
+  function submitScan() {
+    const code = codeInput.value.trim();
+    // Consume failed scans too, or the next keyboard read appends to the bad code.
+    codeInput.value = '';
+    if (!code) return;
 
+    if (scanMode.value === 'rfid') {
+      const epc = code.toUpperCase();
+      const productCode = epcCodes.get(epc);
+      if (!/^[0-9A-F]{1,24}$/.test(epc)) {
+        error.textContent = 'Tag could not be read. Please scan again.';
+        rfidStatus.textContent = 'RFID scan rejected.';
+      } else if (!productCode) {
+        error.textContent = 'Item not recognized. Please ask a staff member for help.';
+        rfidStatus.textContent = 'RFID scan rejected.';
+      } else {
+        processRfidScan([{ epc, code: productCode }]);
+      }
+    } else {
+      add(code);
+    }
+    codeInput.focus();
+  }
+
+  document.querySelector('#add-item').addEventListener('click', submitScan);
   codeInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      add(codeInput.value);
+      submitScan();
     }
+  });
+  scanMode.addEventListener('change', () => {
+    codeInput.value = '';
+    error.textContent = '';
+    codeInput.focus();
   });
 
   // Existing sample product buttons
@@ -159,17 +179,9 @@
     let duplicates = 0;
     let failed = 0;
 
-    const uniqueTags = new Map();
-
     for (const tag of tags) {
-      if (tag.epc && !uniqueTags.has(tag.epc)) {
-        uniqueTags.set(tag.epc, tag);
-      }
-    }
-
-    for (const tag of uniqueTags.values()) {
-     
-      if (scannedTags.has(tag.epc)) {
+      const epc = tag.epc.trim().toUpperCase();
+      if (seenRfidTags.has(epc)) {
         duplicates++;
         continue;
       }
@@ -188,7 +200,7 @@
 
       cart[tag.code] = (cart[tag.code] || 0) + 1;
 
-      scannedTags.set(tag.epc, tag.code);
+      seenRfidTags.add(epc);
       added++;
     }
 

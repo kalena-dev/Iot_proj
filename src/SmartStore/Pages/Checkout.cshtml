@@ -13,10 +13,17 @@
     <div class="checkout-layout">
         <section class="checkout-card checkout-cart" aria-label="Shopping cart">
             <div class="checkout-card-head"><div><span class="checkout-step">01 / SHOPPING CART</span><h2>Your cart</h2></div><span class="checkout-chip">Ready to scan</span></div>
+            <div class="checkout-scan">
+                <label for="scan-mode">Scanner input</label>
+                <select id="scan-mode">
+                    <option value="manual">Barcode / manual</option>
+                    <option value="rfid">RFID</option>
+                </select>
+            </div>
             <div class="checkout-scan"><label for="item-code">Product UPC or EPC</label><div class="checkout-scan-line"><input id="item-code" autocomplete="off" placeholder="Scan or enter a registered UPC / EPC" autofocus /><button type="button" class="primary-button" id="add-item">Add item</button></div></div>
             <div class="checkout-rfid">
                 <button type="button" class="checkout-small-button" id="rfid-scan">Simulate RFID scan</button>
-                <span id="rfid-status" role="status">Demo tags only · no hardware reader connected.</span>
+                <span id="rfid-status" role="status">Demo tags only.</span>
             </div>
             <p id="scan-error" role="alert" class="field-error"></p>
             <div id="cart-list" class="checkout-cart-list" aria-live="polite">No items yet.</div>

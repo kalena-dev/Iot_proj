@@ -154,11 +154,25 @@ Copy `publish/pi` and an untracked `.env` to the Pi, then start `./SmartStore` w
 
 ## Self-checkout classroom demo
 
-Open `/Products` to register products with unique UPC/EPC codes, then **Receive** a delivery to make them available. Open `/Checkout`, enter a UPC or EPC (a keyboard-style scanner also works), or select a product card. **Simulate RFID scan** reads distinct virtual item tags for up to two in-stock products from this catalog; repeated scans do not add the same virtual tags twice. It does not connect to a physical RFID reader.
+Open `/Products` to register products with unique UPC/EPC codes, then **Receive** a delivery to make them available. In `/Checkout`, **Barcode / manual** adds one unit per UPC/EPC entry or product-card click. For a physical CF600 configured for **keyboard emulation, raw EPC output and an Enter suffix**, choose **RFID** and focus the code box. Repeated reads of an EPC count once per page session, even after removing its item; use an explicit manual add to restore a removed item. **Simulate RFID scan** uses virtual tags only and never connects to USB. USB/virtual-serial SDK operation and mapping multiple item EPCs to one product are not implemented; see [reader findings and setup](docs/PHASE3-inventory.md#cf600-reader-findings).
 
 Choose **Approve** or **Decline** for the simulated payment. Both outcomes save records in MongoDB's `demo_sales`; only approvals reduce persistent inventory. An optional registered customer email earns loyalty points on approval and enables purchase-history lookup. View the itemized receipt inline after approval. SMTP must be configured and `EMAIL_ENABLED=true` for receipt emails; missing or failed email does not undo a successful checkout. Approved checkout signals the blue LED; decline/failure signals red LED and buzzer when hardware is enabled.
 
 Use `/Management` to review inventory and recent sales, and `/Products` to edit details or receive/undo deliveries. Stock no longer resets when the app restarts and cannot be overwritten with an arbitrary stock value. This is a classroom simulation, not a production checkout or secured management interface.
+
+### Scanner regression checks
+
+Requires Node.js 20+ and the .NET 8 SDK/runtime:
+
+```bash
+cd tests/SmartStore.ScannerTests
+npm ci
+npx playwright install chromium
+npm test
+```
+
+The Chromium checks exercise the real checkout script with an isolated catalog fixture, plus the rendered checkout and product-registration pages. They start a separate app on port 5279 with an intentionally unreachable local MongoDB address, disable GPIO/email, and never use store data. These checks verify browser input behavior, not CF600 USB communication or RF performance.
+
 
 ## Demonstration checklist
 

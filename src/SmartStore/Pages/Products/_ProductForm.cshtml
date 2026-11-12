@@ -38,12 +38,12 @@
     <div class="form-grid">
         <div class="field">
             <label asp-for="Upc"></label><span class="required-mark" aria-hidden="true">*</span>
-            <input asp-for="Upc" data-scan inputmode="numeric" maxlength="13" placeholder="049000028911" autocomplete="off" class="code-input" />
+            <input asp-for="Upc" data-scan inputmode="numeric" placeholder="049000028911" autocomplete="off" class="code-input" />
             <span asp-validation-for="Upc" class="field-error"></span>
         </div>
         <div class="field">
             <label asp-for="Epc"></label><span class="required-mark" aria-hidden="true">*</span>
-            <input asp-for="Epc" data-scan maxlength="24" placeholder="E28011606000020A1B2C3D4E" autocomplete="off" class="code-input" />
+            <input asp-for="Epc" data-scan placeholder="E28011606000020A1B2C3D4E" autocomplete="off" class="code-input" />
             <span asp-validation-for="Epc" class="field-error"></span>
         </div>
     </div>
