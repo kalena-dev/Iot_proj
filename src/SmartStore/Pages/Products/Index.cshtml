@@ -1,0 +1,110 @@
+@page
+@model SmartStore.Pages.Products.IndexModel
+@{
+    ViewData["Title"] = "Products";
+    var filtering = !string.IsNullOrWhiteSpace(Model.Q) || !string.IsNullOrWhiteSpace(Model.Category);
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero">
+    <div class="hero__copy">
+        <span class="eyebrow">Inventory · phase 03</span>
+        <h1>Products</h1>
+        <p>Register, edit and delete products, and receive stock. Stock goes up when a delivery is received and down when a customer checks out.</p>
+    </div>
+    <div class="products-actions">
+        <a class="primary-button" asp-page="Create">+ Add product</a>
+        <a class="secondary-button" asp-page="Receive">Receive stock</a>
+    </div>
+</section>
+
+<partial name="_StatusNotice" model="(Model.StatusMessage, Model.StatusKind)" />
+
+<section class="panel products-panel">
+    @if (Model.DatabaseWarning is not null)
+    {
+        <p class="system-warning" role="alert">@Model.DatabaseWarning</p>
+    }
+    else
+    {
+        <form method="get" class="products-filter" role="search">
+            <input asp-for="Q" type="search" placeholder="Search name, producer, or scan a UPC / EPC" aria-label="Search products" data-scan-submit />
+            <select asp-for="Category" aria-label="Filter by category">
+                <option value="">All categories</option>
+                @foreach (var category in Model.Categories) { <option value="@category">@category</option> }
+            </select>
+            <button type="submit" class="secondary-button">Search</button>
+            @if (filtering) { <a asp-page="Index">Clear</a> }
+        </form>
+
+        <p class="products-count">
+            Showing @Model.Items.Count of @Model.TotalCount product(s) ·
+            @Model.Items.Sum(p => p.QuantityInStock) unit(s) in stock
+        </p>
+
+        @if (Model.Items.Count == 0)
+        {
+            <div class="empty-state">
+                <strong>@(filtering ? "No products match your search." : "No products yet.")</strong>
+                @if (!filtering) { <span><a asp-page="Create">Add your first product</a> to get started.</span> }
+            </div>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table class="products-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Product</th>
+                            <th scope="col">Category</th>
+                            <th scope="col">UPC / EPC</th>
+                            <th scope="col" class="num">Price</th>
+                            <th scope="col" class="num">In stock</th>
+                            <th scope="col"><span class="visually-hidden">Actions</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var product in Model.Items)
+                        {
+                            var stockClass = product.QuantityInStock == 0 ? "stock--out"
+                                : product.QuantityInStock <= IndexModel.LowStockThreshold ? "stock--low" : "stock--ok";
+                            <tr>
+                                <td>
+                                    <div class="product-cell">
+                                        @if (product.ImageUrl is not null)
+                                        {
+                                            <img src="@product.ImageUrl" alt="" loading="lazy" referrerpolicy="no-referrer" />
+                                        }
+                                        <div>
+                                            <strong>@product.Name</strong>
+                                            <small>@product.Producer</small>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>@product.Category</td>
+                                <td><code>@product.Upc</code><br /><code class="epc">@product.Epc</code></td>
+                                <td class="num">@product.Price.ToString("C", System.Globalization.CultureInfo.GetCultureInfo("en-CA"))</td>
+                                <td class="num"><span class="stock @stockClass">@product.QuantityInStock</span></td>
+                                <td class="row-actions">
+                                    <a asp-page="Receive" asp-route-id="@product.Id">Receive</a>
+                                    <a asp-page="Edit" asp-route-id="@product.Id">Edit</a>
+                                    <details class="confirm-delete">
+                                        <summary>Delete</summary>
+                                        <div class="confirm-delete__box">
+                                            <p>Delete <strong>@product.Name</strong> and its delivery history? This can't be undone.</p>
+                                            <form method="post" asp-page-handler="Delete" asp-route-id="@product.Id" asp-route-q="@Model.Q" asp-route-category="@Model.Category">
+                                                <button type="submit" class="danger-button">Yes, delete</button>
+                                            </form>
+                                        </div>
+                                    </details>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</section>
+
+@section Scripts { <script src="~/js/products.js" asp-append-version="true"></script> }

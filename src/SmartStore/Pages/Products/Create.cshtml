@@ -1,0 +1,32 @@
+@page
+@model SmartStore.Pages.Products.CreateModel
+@{
+    ViewData["Title"] = "Add product";
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero">
+    <div class="hero__copy">
+        <span class="eyebrow">Inventory · products</span>
+        <h1>Add a product</h1>
+        <p>Each product is registered once. New products start with 0 in stock; you'll be taken to the receiving page next.</p>
+    </div>
+</section>
+
+<partial name="_StatusNotice" model='(Model.ErrorMessage, (string?)"error")' />
+
+<section class="panel form-panel product-form-panel">
+    <form method="post" id="product-form">
+        <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
+        <partial name="_ProductForm" for="Input" />
+        <div class="form-actions">
+            <a asp-page="Index">Cancel</a>
+            <button type="submit" class="primary-button">Add product</button>
+        </div>
+    </form>
+</section>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script src="~/js/products.js" asp-append-version="true"></script>
+}

@@ -1,0 +1,23 @@
+@* Shared notification for the product pages. Model = (message, kind) where kind is "success" or "error". *@
+@model (string? Message, string? Kind)
+@if (!string.IsNullOrWhiteSpace(Model.Message))
+{
+    var success = Model.Kind == "success";
+    <div class="notice @(success ? "notice--success" : "notice--error")" role="@(success ? "status" : "alert")" data-dismissible>
+        <div class="notice__icon" aria-hidden="true">
+            @if (success)
+            {
+                <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg>
+            }
+            else
+            {
+                <svg viewBox="0 0 24 24"><path d="M12 8v5m0 3.5v.5M4.5 20h15a1.5 1.5 0 0 0 1.3-2.25l-7.5-13a1.5 1.5 0 0 0-2.6 0l-7.5 13A1.5 1.5 0 0 0 4.5 20Z" /></svg>
+            }
+        </div>
+        <div>
+            <strong>@(success ? "Done" : "Action unsuccessful")</strong>
+            <p>@Model.Message</p>
+        </div>
+        <button type="button" class="notice__close" aria-label="Dismiss notification">×</button>
+    </div>
+}
