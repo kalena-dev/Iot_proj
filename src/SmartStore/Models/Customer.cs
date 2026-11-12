@@ -28,6 +28,9 @@ public sealed class Customer
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime CreatedAtUtc { get; set; }
 
+    [BsonElement("totalPoints")]
+    public int TotalPoints { get; set; }
+
     [BsonIgnore]
     public string FullName => $"{FirstName} {LastName}";
 }

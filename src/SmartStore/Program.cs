@@ -54,6 +54,7 @@ builder.Services.AddSingleton<ICustomerRepository, MongoCustomerRepository>();
 builder.Services.AddSingleton<IProductRepository, MongoProductRepository>();
 builder.Services.AddSingleton<IStatusIndicator, RaspberryPiStatusIndicator>();
 builder.Services.AddSingleton<StoreDemo>();
+builder.Services.AddSingleton<ReceiptEmailService>();
 
 var app = builder.Build();
 

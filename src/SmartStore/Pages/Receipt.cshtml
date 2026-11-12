@@ -1,0 +1,6 @@
+@page "{id}"
+@model SmartStore.Pages.ReceiptModel
+@{ ViewData["Title"] = "Receipt"; }
+<h1>Purchase receipt</h1>
+<pre style="white-space:pre-wrap">@Model.ReceiptText</pre>
+<button type="button" onclick="window.print()">Print receipt</button>
