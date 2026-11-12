@@ -51,6 +51,7 @@ builder.Services.AddSingleton<IMongoClient>(serviceProvider =>
 });
 
 builder.Services.AddSingleton<ICustomerRepository, MongoCustomerRepository>();
+builder.Services.AddSingleton<IProductRepository, MongoProductRepository>();
 builder.Services.AddSingleton<IStatusIndicator, RaspberryPiStatusIndicator>();
 builder.Services.AddSingleton<StoreDemo>();
 

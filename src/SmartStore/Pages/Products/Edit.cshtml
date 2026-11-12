@@ -1,0 +1,32 @@
+@page "{id}"
+@model SmartStore.Pages.Products.EditModel
+@{
+    ViewData["Title"] = "Edit product";
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero">
+    <div class="hero__copy">
+        <span class="eyebrow">Inventory · products</span>
+        <h1>Edit @Model.Product?.Name</h1>
+        <p>Currently <strong>@Model.Product?.QuantityInStock</strong> in stock. To change stock, <a asp-page="Receive" asp-route-id="@Model.Product?.Id">receive a delivery</a> instead.</p>
+    </div>
+</section>
+
+<partial name="_StatusNotice" model='(Model.ErrorMessage, (string?)"error")' />
+
+<section class="panel form-panel product-form-panel">
+    <form method="post" id="product-form">
+        <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
+        <partial name="_ProductForm" for="Input" />
+        <div class="form-actions">
+            <a asp-page="Index">Cancel</a>
+            <button type="submit" class="primary-button">Save changes</button>
+        </div>
+    </form>
+</section>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script src="~/js/products.js" asp-append-version="true"></script>
+}

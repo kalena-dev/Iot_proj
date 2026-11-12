@@ -1,0 +1,105 @@
+/* Product management and receiving pages (Phase 3 inventory). */
+
+.products-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.products-actions .primary-button,
+.products-actions .secondary-button { text-decoration: none; }
+
+.secondary-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 43px; padding: 0 16px;
+  border: 1px solid var(--line); border-radius: 7px;
+  color: var(--navy); background: #fff;
+  font: inherit; font-size: .84rem; font-weight: 600; text-decoration: none;
+  cursor: pointer; white-space: nowrap;
+}
+.secondary-button:hover { border-color: var(--navy); }
+
+.danger-button {
+  padding: 8px 14px; border: 0; border-radius: 6px;
+  color: #fff; background: var(--red);
+  font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer;
+}
+.danger-button:hover { background: #c93a42; }
+
+.products-panel { padding: 22px 24px; }
+.product-form-panel { max-width: 860px; }
+.field-hint { margin: -4px 0 14px; color: var(--muted); font-size: .78rem; }
+.code-input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .02em; }
+
+.products-filter { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.products-filter input,
+.products-filter select {
+  height: 43px; padding: 0 12px;
+  border: 1px solid #d7dde2; border-radius: 7px; background: #fbfcfc;
+  font: inherit; font-size: .84rem; color: var(--ink);
+}
+.products-filter input { flex: 1 1 260px; min-width: 0; }
+.products-filter a { font-size: .84rem; }
+
+.scan-lookup { display: block; margin-bottom: 22px; padding-bottom: 20px; border-bottom: 1px solid var(--soft-line); }
+.scan-lookup label { display: block; margin-bottom: 7px; color: #3f4b55; font-size: .76rem; font-weight: 600; }
+.scan-lookup > div { display: flex; gap: 10px; }
+
+.products-count { margin: 0 0 12px; color: var(--muted); font-size: .8rem; }
+
+.table-scroll { overflow-x: auto; }
+.products-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.products-table th {
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: .7rem; font-weight: 600; text-align: left;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.products-table td { padding: 12px; border-bottom: 1px solid var(--soft-line); vertical-align: middle; }
+.products-table tbody tr:hover { background: #fafbfc; }
+.products-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.products-table code { font-size: .76rem; color: #3f4b55; }
+.products-table code.epc { color: var(--muted); }
+
+.product-cell { display: flex; align-items: center; gap: 10px; }
+.product-cell img { width: 38px; height: 38px; object-fit: cover; border-radius: 6px; border: 1px solid var(--soft-line); }
+.product-cell strong { display: block; }
+.product-cell small { color: var(--muted); }
+
+.stock { display: inline-block; min-width: 42px; padding: 3px 9px; border-radius: 999px; font-weight: 600; text-align: center; }
+.stock--ok { color: #18785a; background: var(--mint-soft); }
+.stock--low { color: #8a560f; background: #fdf3e3; }
+.stock--out { color: #b72f39; background: var(--red-soft); }
+
+.row-actions { white-space: nowrap; text-align: right; }
+.row-actions > a,
+.confirm-delete > summary { margin-left: 12px; color: var(--navy); font-size: .8rem; font-weight: 600; }
+.row-actions > a:first-child { margin-left: 0; }
+
+.confirm-delete { display: inline-block; position: relative; }
+.confirm-delete > summary { list-style: none; cursor: pointer; color: #b72f39; text-decoration: underline; }
+.confirm-delete > summary::-webkit-details-marker { display: none; }
+.confirm-delete__box {
+  position: absolute; right: 0; z-index: 5; width: 260px; margin-top: 8px; padding: 14px;
+  border: 1px solid #f0c5c8; border-radius: 9px; background: #fff; box-shadow: var(--shadow);
+  white-space: normal; text-align: left;
+}
+.confirm-delete__box p { margin: 0 0 10px; font-size: .8rem; }
+
+.receive-history { padding: 22px; }
+.stock-summary { margin: 0 0 4px; color: var(--muted); }
+.stock-summary span { color: var(--ink); font-size: 1.8rem; font-weight: 700; }
+.history-list { margin: 10px 0 16px; padding: 0; list-style: none; }
+.history-list li { padding: 10px 0; border-bottom: 1px solid var(--soft-line); }
+.history-list li > div { display: flex; justify-content: space-between; gap: 10px; }
+.history-list strong { color: #18785a; }
+.history-list span,
+.history-list small { color: var(--muted); font-size: .78rem; }
+.history-list small { display: block; margin-top: 2px; }
+.history-list .confirm-delete > summary { margin-left: 0; font-size: .74rem; }
+.history-list .confirm-delete__box { left: 0; right: auto; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .products-panel { padding: 16px; }
+  .products-actions { margin-top: 16px; }
+  .confirm-delete__box { width: min(260px, 80vw); }
+}

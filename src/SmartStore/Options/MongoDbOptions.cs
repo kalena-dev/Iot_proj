@@ -10,5 +10,9 @@ public sealed class MongoDbOptions
 
     public string CustomersCollectionName { get; set; } = "customers";
 
+    public string ProductsCollectionName { get; set; } = "products";
+
+    public string ReceptionsCollectionName { get; set; } = "receptions";
+
     public int ServerSelectionTimeoutSeconds { get; set; } = 8;
 }
