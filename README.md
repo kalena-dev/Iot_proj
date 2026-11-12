@@ -89,7 +89,7 @@ Set `Gpio:BuzzerMode` to `Passive` (default) for the kit's passive buzzer; it us
 
 The repository's local `.env` is ignored by Git. Both services load configuration in this order: process environment, the file named by `MONGODB_ENV_FILE` (if set), repository `.env`, then `$XDG_CONFIG_HOME/northstar/credentials.env` (default `$HOME/.config/northstar/credentials.env`). Earlier values win. No particular username or checkout location is required. Credentials stay outside the compiled app.
 
-Approved checkout uses MongoDB transactions for receipts and loyalty points, so use Atlas or a replica set, not a standalone `mongod`. To keep the credential file outside the checkout, set `MONGODB_ENV_FILE` to its absolute path before starting either service.
+Checkout, delivery receiving/undo, and product/history deletion use MongoDB transactions, so use Atlas or a replica set, not a standalone `mongod`. Approved checkout commits stock, receipt, and loyalty points together. To keep the credential file outside the checkout, set `MONGODB_ENV_FILE` to its absolute path before starting either service.
 
 
 ## Run on a development computer
@@ -109,6 +109,18 @@ Check MongoDB connectivity without exposing credentials:
 ```bash
 curl http://localhost:5198/health
 ```
+
+### Database regression checks
+
+The database integration tests require an explicitly configured **local replica set**:
+
+```bash
+SMARTSTORE_TEST_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0" \
+  dotnet test tests/SmartStore.Tests/SmartStore.Tests.csproj -c Release
+```
+
+These tests reject remote/Atlas URIs and use isolated, randomly named databases. They cover receiving, unique product codes, approved/declined checkout, stock/loyalty rollback, concurrent overselling/undo, cancellation, and visibility of uncommitted writes from a separate client. Without this variable, the database tests are explicitly skipped; ordinary tests still run.
+
 
 ## Run on Raspberry Pi 5
 

@@ -63,6 +63,10 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
                 SetStatus($"Product \"{product.Name}\" deleted successfully.", "success");
             }
         }
+        catch (TransactionOutcomeUnknownException exception)
+        {
+            SetStatus(exception.Message, "error");
+        }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {
             logger.LogWarning(exception, "Cannot delete product {ProductId}.", id);

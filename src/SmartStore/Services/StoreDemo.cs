@@ -59,118 +59,104 @@ public sealed class StoreDemo
             throw new InvalidOperationException("Add 1–20 different items with quantities between 1 and 50.");
         if (paymentResult is not ("approve" or "decline"))
             throw new InvalidOperationException("Choose a valid simulated payment result.");
+        if (cart.Keys.Any(code => code.Trim().Length is < 1 or > 24))
+            throw new InvalidOperationException("Enter a valid UPC or EPC.");
 
-        var productsById = new Dictionary<string, Product>();
-        var quantitiesById = new Dictionary<string, int>();
-        foreach (var (code, quantity) in cart)
-        {
-            var scannedCode = code.Trim();
-            if (scannedCode.Length is < 1 or > 24)
-                throw new InvalidOperationException("Enter a valid UPC or EPC.");
-            var product = await _products.FindByUpcAsync(scannedCode, cancellationToken)
-                ?? await _products.FindByEpcAsync(scannedCode.ToUpperInvariant(), cancellationToken)
-                ?? throw new InvalidOperationException($"Unknown item code: {scannedCode}.");
-            var productId = product.Id ?? throw new InvalidOperationException("The product has no persistent identity.");
-            quantitiesById.TryGetValue(productId, out var previousQuantity);
-            var combinedQuantity = previousQuantity + quantity;
-            if (combinedQuantity > 50)
-                throw new InvalidOperationException("Each product is limited to 50 units per checkout.");
-            if (product.QuantityInStock < combinedQuantity)
-                throw new InvalidOperationException($"Not enough {product.Name} in stock.");
-            productsById[productId] = product;
-            quantitiesById[productId] = combinedQuantity;
-        }
-        var lines = quantitiesById.Select(item =>
-        {
-            var product = productsById[item.Key];
-            return new DemoSaleLine(product.Upc, product.Name, product.Price, item.Value);
-        }).ToList();
+        var normalizedEmail = string.IsNullOrWhiteSpace(customerEmail) ? null : customerEmail.Trim().ToLowerInvariant();
+        if (normalizedEmail is not null &&
+            (normalizedEmail.Length > 254 ||
+             !System.Net.Mail.MailAddress.TryCreate(normalizedEmail, out var address) ||
+             !string.Equals(address.Address, normalizedEmail, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Enter a valid customer email address.");
 
-        Customer? customer = null;
-        if (!string.IsNullOrWhiteSpace(customerEmail))
-        {
-            customerEmail = customerEmail.Trim().ToLowerInvariant();
-            if (customerEmail.Length > 254 ||
-                !System.Net.Mail.MailAddress.TryCreate(customerEmail, out var address) ||
-                !string.Equals(address.Address, customerEmail, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Enter a valid customer email address.");
-            customer = await _customers.Find(c => c.Email == customerEmail,
-                    new FindOptions { Collation = new Collation("en", strength: CollationStrength.Secondary) })
-                .FirstOrDefaultAsync(cancellationToken);
-            if (customer is null)
-                throw new InvalidOperationException("Customer not found. Register the email first or leave it blank for guest checkout.");
-        }
-        var total = lines.Sum(x => x.Price * x.Quantity);
-        var approved = paymentResult == "approve";
-        var sale = new DemoSale
-        {
-            Items = lines, Total = total, PaymentStatus = approved ? "approved" : "declined",
-            CustomerId = customer?.Id, CustomerEmail = customer?.Email.Trim().ToLowerInvariant(),
-            PointsEarned = approved && customer is not null ? checked((int)decimal.Floor(total)) : 0,
-            EmailStatus = approved && customer is not null ? "pending" : "not_requested"
-        };
-        if (!approved)
-        {
-            // A declined attempt is retained, but never reserves stock or changes points.
-            await _sales.InsertOneAsync(sale, cancellationToken: cancellationToken);
-            return sale;
-        }
-
-        var stock = await _products.DecrementStockManyAsync(quantitiesById, cancellationToken);
-        if (!stock.Succeeded)
-            throw new InvalidOperationException(stock.Message ?? "Stock changed. Review your cart and try again.");
+        // Keep the identity stable if the driver retries the transaction callback.
+        var saleId = Guid.NewGuid().ToString("N");
+        var createdAtUtc = DateTime.UtcNow;
         try
         {
-            using var session = await _client.StartSessionAsync(cancellationToken: cancellationToken);
-            // Atlas commits the receipt and loyalty increment together, or neither.
-            return await session.WithTransactionAsync(async (transaction, token) =>
+            return await MongoTransaction.RunAsync(_client, async (session, token) =>
             {
-                if (customer is not null && sale.PointsEarned > 0)
+                // Retry-local state and reads use the same snapshot as every stock write.
+                var productsById = new Dictionary<string, Product>();
+                var quantitiesById = new Dictionary<string, int>();
+                foreach (var (code, quantity) in cart)
                 {
-                    var update = await _customers.UpdateOneAsync(transaction, c => c.Id == customer.Id,
-                        Builders<Customer>.Update.Inc(c => c.TotalPoints, sale.PointsEarned),
-                        cancellationToken: token);
-                    if (update.MatchedCount != 1)
-                        throw new InvalidOperationException("Customer no longer exists. Register again or use guest checkout.");
+                    var scannedCode = code.Trim();
+                    var product = await _products.FindByUpcAsync(scannedCode, token, session)
+                        ?? await _products.FindByEpcAsync(scannedCode, token, session)
+                        ?? throw new InvalidOperationException($"Unknown item code: {scannedCode}.");
+                    var productId = product.Id ?? throw new InvalidOperationException("The product has no persistent identity.");
+                    quantitiesById.TryGetValue(productId, out var previousQuantity);
+                    var combinedQuantity = previousQuantity + quantity;
+                    if (combinedQuantity > 50)
+                        throw new InvalidOperationException("Each product is limited to 50 units per checkout.");
+                    if (product.QuantityInStock < combinedQuantity)
+                        throw new InvalidOperationException($"Not enough {product.Name} in stock.");
+                    productsById[productId] = product;
+                    quantitiesById[productId] = combinedQuantity;
                 }
-                await _sales.InsertOneAsync(transaction, sale, cancellationToken: token);
+                var lines = quantitiesById.Select(item =>
+                {
+                    var product = productsById[item.Key];
+                    return new DemoSaleLine(product.Upc, product.Name, product.Price, item.Value);
+                }).ToList();
+
+                Customer? customer = null;
+                if (normalizedEmail is not null)
+                {
+                    customer = await _customers.Find(session, c => c.Email == normalizedEmail,
+                            new FindOptions { Collation = new Collation("en", strength: CollationStrength.Secondary) })
+                        .FirstOrDefaultAsync(token);
+                    if (customer is null)
+                        throw new InvalidOperationException("Customer not found. Register the email first or leave it blank for guest checkout.");
+                }
+                var total = lines.Sum(x => x.Price * x.Quantity);
+                var approved = paymentResult == "approve";
+                var sale = new DemoSale
+                {
+                    Id = saleId, CreatedAtUtc = createdAtUtc,
+                    Items = lines, Total = total, PaymentStatus = approved ? "approved" : "declined",
+                    CustomerId = customer?.Id, CustomerEmail = customer?.Email.Trim().ToLowerInvariant(),
+                    PointsEarned = approved && customer is not null ? checked((int)decimal.Floor(total)) : 0,
+                    EmailStatus = approved && customer is not null ? "pending" : "not_requested"
+                };
+                if (approved)
+                {
+                    foreach (var (productId, quantity) in quantitiesById)
+                    {
+                        if (!await _products.DecrementStockAsync(session, productId, quantity, token))
+                            throw new InvalidOperationException("Stock changed. Review your cart and try again.");
+                    }
+                    if (customer is not null && sale.PointsEarned > 0)
+                    {
+                        var update = await _customers.UpdateOneAsync(session, c => c.Id == customer.Id,
+                            Builders<Customer>.Update.Inc(c => c.TotalPoints, sale.PointsEarned),
+                            cancellationToken: token);
+                        if (update.MatchedCount != 1)
+                            throw new InvalidOperationException("Customer no longer exists. Register again or use guest checkout.");
+                    }
+                }
+                await _sales.InsertOneAsync(session, sale, cancellationToken: token);
                 return sale;
-            }, new TransactionOptions(writeConcern: WriteConcern.WMajority), cancellationToken);
+            }, "Checkout", saleId, cancellationToken);
         }
-        catch (Exception exception)
+        catch (TransactionOutcomeUnknownException)
         {
-            // A lost commit acknowledgement is not proof of failure. Check before returning stock.
-            DemoSale? committed;
+            // A durable receipt proves all inventory and points writes committed with it.
+            using var confirmation = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             try
             {
-                committed = await _sales.WithReadConcern(ReadConcern.Majority)
-                    .Find(s => s.Id == sale.Id).FirstOrDefaultAsync(CancellationToken.None);
+                var committed = await _sales.WithReadConcern(ReadConcern.Majority)
+                    .WithReadPreference(ReadPreference.Primary)
+                    .Find(s => s.Id == saleId).FirstOrDefaultAsync(confirmation.Token);
+                if (committed is not null) return committed;
             }
-            catch (Exception confirmationException)
+            catch (Exception exception) when (exception is MongoException or TimeoutException or OperationCanceledException)
             {
-                _logger.LogError("Cannot confirm checkout {SaleId}; stock reservation retained. Failure types: {FailureType}, {ConfirmationType}.",
-                    sale.Id, exception.GetType().Name, confirmationException.GetType().Name);
-                throw new InvalidOperationException(
-                    $"Checkout status is unknown. Do not retry payment; check receipt {sale.Id} with store staff.", exception);
+                _logger.LogWarning("Cannot confirm checkout {SaleId}. Failure type: {FailureType}.",
+                    saleId, exception.GetType().Name);
             }
-            if (committed is not null) return committed;
-            if (exception is MongoException mongoException &&
-                mongoException.HasErrorLabel("UnknownTransactionCommitResult"))
-            {
-                _logger.LogError("Checkout {SaleId} has an unknown commit outcome; stock reservation retained.", sale.Id);
-                throw new InvalidOperationException(
-                    $"Checkout status is unknown. Do not retry payment; check receipt {sale.Id} with store staff.", exception);
-            }
-
-            try { await _products.RestoreStockAsync(quantitiesById, CancellationToken.None); }
-            catch (Exception restoreException)
-            {
-                _logger.LogError("Cannot restore inventory for failed checkout {SaleId}. Failure type: {FailureType}.",
-                    sale.Id, restoreException.GetType().Name);
-                throw new InvalidOperationException(
-                    $"Checkout was not saved, but inventory could not be restored. Contact store staff with reference {sale.Id}.",
-                    restoreException);
-            }
+            _logger.LogError("Checkout {SaleId} has an unknown commit outcome. No compensating writes were issued.", saleId);
             throw;
         }
     }

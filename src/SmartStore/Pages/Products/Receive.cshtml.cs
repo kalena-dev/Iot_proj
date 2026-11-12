@@ -72,6 +72,11 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
         {
             ModelState.AddModelError("Input.ProductId", exception.Message);
         }
+        catch (TransactionOutcomeUnknownException exception)
+        {
+            SetStatus(exception.Message, "error");
+            return RedirectToPage(new { id = Input.ProductId });
+        }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {
             logger.LogWarning(exception, "Cannot receive stock.");
