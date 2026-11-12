@@ -24,7 +24,10 @@ public interface IProductRepository
     /// <summary>Deletes the product and its reception history. Returns false if it did not exist.</summary>
     Task<bool> DeleteAsync(string id, CancellationToken cancellationToken = default);
 
-    /// <summary>Records a delivery and adds its quantity to the product's stock. Returns the updated product.</summary>
+    /// <summary>
+    /// Records a delivery and adds its quantity to stock. A failed stock update removes the history entry.
+    /// These are compensated writes, not a cross-document transaction.
+    /// </summary>
     /// <exception cref="ProductNotFoundException">The product no longer exists.</exception>
     Task<Product> ReceiveStockAsync(Reception reception, CancellationToken cancellationToken = default);
 
@@ -37,7 +40,10 @@ public interface IProductRepository
         int count = 20,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Undoes a reception entered by mistake and removes its quantity from stock.</summary>
+    /// <summary>
+    /// Atomically claims a reception before removing its quantity from stock, so concurrent undo cannot apply twice.
+    /// Restores its history if the stock adjustment fails; this is not a cross-document transaction.
+    /// </summary>
     /// <exception cref="InvalidOperationException">Some of those units were already sold.</exception>
     Task<bool> DeleteReceptionAsync(string receptionId, CancellationToken cancellationToken = default);
 

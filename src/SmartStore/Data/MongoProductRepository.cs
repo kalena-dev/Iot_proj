@@ -110,22 +110,34 @@ public sealed class MongoProductRepository : IProductRepository
         if (!IsObjectId(reception.ProductId)) throw new ProductNotFoundException();
         await EnsureIndexesAsync(cancellationToken);
 
-        // Save the reception first, then raise stock. If the product disappeared in
-        // between, remove the orphan reception so history and stock stay in sync.
+        // The two collections cannot be updated atomically without a transaction.
+        // Compensate a failed stock update even when the request was cancelled.
         await _receptions.InsertOneAsync(reception, cancellationToken: cancellationToken);
-        var updated = await _products.FindOneAndUpdateAsync(
-            p => p.Id == reception.ProductId,
-            Builders<Product>.Update.Inc(p => p.QuantityInStock, reception.Quantity),
-            new FindOneAndUpdateOptions<Product> { ReturnDocument = ReturnDocument.After },
-            cancellationToken);
-
-        if (updated is null)
+        try
         {
-            await _receptions.DeleteOneAsync(r => r.Id == reception.Id, CancellationToken.None);
-            throw new ProductNotFoundException();
-        }
+            var updated = await _products.FindOneAndUpdateAsync(
+                p => p.Id == reception.ProductId,
+                Builders<Product>.Update.Inc(p => p.QuantityInStock, reception.Quantity),
+                new FindOneAndUpdateOptions<Product> { ReturnDocument = ReturnDocument.After },
+                cancellationToken);
 
-        return updated;
+            return updated ?? throw new ProductNotFoundException();
+        }
+        catch (Exception receiveException)
+        {
+            try
+            {
+                await _receptions.DeleteOneAsync(r => r.Id == reception.Id, CancellationToken.None);
+            }
+            catch (Exception rollbackException)
+            {
+                throw new AggregateException(
+                    "Receiving stock failed and its delivery history could not be rolled back. Check stock and history before retrying.",
+                    receiveException, rollbackException);
+            }
+
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<Reception>> GetReceptionsAsync(
@@ -152,18 +164,38 @@ public sealed class MongoProductRepository : IProductRepository
     public async Task<bool> DeleteReceptionAsync(string receptionId, CancellationToken cancellationToken = default)
     {
         if (!IsObjectId(receptionId)) return false;
-        var reception = await _receptions.Find(r => r.Id == receptionId).FirstOrDefaultAsync(cancellationToken);
+        // Claim the delivery atomically. Only the caller that removed the history
+        // document may adjust stock; concurrent/repeated undo requests do nothing.
+        var reception = await _receptions.FindOneAndDeleteAsync(
+            r => r.Id == receptionId, cancellationToken: cancellationToken);
         if (reception is null) return false;
 
-        var productExists = await _products.Find(p => p.Id == reception.ProductId).AnyAsync(cancellationToken);
-        if (productExists && !await DecrementStockAsync(reception.ProductId, reception.Quantity, cancellationToken))
+        try
         {
-            throw new InvalidOperationException(
-                "This delivery can't be undone because some of its units have already been sold.");
-        }
+            if (!await DecrementStockAsync(reception.ProductId, reception.Quantity, cancellationToken)
+                && await _products.Find(p => p.Id == reception.ProductId).AnyAsync(cancellationToken))
+            {
+                throw new InvalidOperationException(
+                    "This delivery can't be undone because some of its units have already been sold.");
+            }
 
-        await _receptions.DeleteOneAsync(r => r.Id == receptionId, cancellationToken);
-        return true;
+            return true;
+        }
+        catch (Exception undoException)
+        {
+            try
+            {
+                await _receptions.InsertOneAsync(reception, cancellationToken: CancellationToken.None);
+            }
+            catch (Exception rollbackException)
+            {
+                throw new AggregateException(
+                    "Undoing the delivery failed and its history could not be restored. Check stock and history before retrying.",
+                    undoException, rollbackException);
+            }
+
+            throw;
+        }
     }
 
     public async Task<bool> DecrementStockAsync(string productId, int quantity, CancellationToken cancellationToken = default)

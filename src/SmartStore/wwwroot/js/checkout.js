@@ -1,55 +1,225 @@
+
 (() => {
-  const products = new Map([...document.querySelectorAll('.demo-product')].map(el => [el.dataset.code, {
-    name: el.dataset.name, price: Number(el.dataset.price), stock: Number(el.dataset.stock)
-  }]));
+  // Existing product data from the ASP.NET checkout page
+  const products = new Map(
+    [...document.querySelectorAll('.demo-product')].map(el => [
+      el.dataset.code,
+      {
+        name: el.dataset.name,
+        epc: el.dataset.epc,
+        price: Number(el.dataset.price),
+        stock: Number(el.dataset.stock)
+      }
+    ])
+  );
+  const epcCodes = new Map([...products].map(([code, product]) => [product.epc, code]));
+
   const cart = {};
+
   const codeInput = document.querySelector('#item-code');
   const error = document.querySelector('#scan-error');
   const list = document.querySelector('#cart-list');
   const total = document.querySelector('#cart-total');
   const checkout = document.querySelector('#checkout-button');
-  const money = value => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(value);
+  const rfidButton = document.querySelector('#rfid-scan');
+  const rfidStatus = document.querySelector('#rfid-status');
 
+  const money = value =>
+    new Intl.NumberFormat('en-CA', {
+      style: 'currency',
+      currency: 'CAD'
+    }).format(value);
+
+  // Distinct virtual item tags use the current catalog, not a second hardcoded one.
+  const demoRfidTags = [...products].filter(([, product]) => product.stock > 0)
+    .slice(0, 2).flatMap(([code, product], index) =>
+      Array.from({ length: Math.min(index === 0 ? 2 : 1, product.stock) },
+        (_, unit) => ({ epc: `DEMO-${code}-${unit}`, code })));
+
+  // Keep track of which physical RFID tags are in the cart
+  const scannedTags = new Map();
+
+  // Display the shopping cart
   function render() {
     list.replaceChildren();
+
     let amount = 0;
+
     for (const [code, quantity] of Object.entries(cart)) {
       const product = products.get(code);
+      if (!product) continue;
+
       amount += quantity * product.price;
+
       const row = document.createElement('div');
       row.className = 'demo-cart-row';
+
       const name = document.createElement('span');
-      name.textContent = `${product.name} (${code}) — ${money(product.price)} × ${quantity}`;
+      name.textContent =
+        `${product.name} (${code}) — ${money(product.price)} × ${quantity}`;
+
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.textContent = 'Remove one';
+
       remove.addEventListener('click', () => {
-        if (--cart[code] === 0) delete cart[code];
+        // Remove one item from the cart
+        cart[code]--;
+
+        if (cart[code] <= 0) {
+          delete cart[code];
+        }
+
+        // If this item came from RFID, release one associated EPC.
+        for (const [epc, tagCode] of scannedTags) {
+          if (tagCode === code) {
+            scannedTags.delete(epc);
+            break;
+          }
+        }
+
+        error.textContent = '';
         render();
       });
+
       row.append(name, remove);
       list.append(row);
     }
-    if (!Object.keys(cart).length) list.textContent = 'No items yet.';
+
+    if (!Object.keys(cart).length) {
+      list.textContent = 'No items yet.';
+    }
+
     total.textContent = money(amount);
-    checkout.disabled = Object.keys(cart).length === 0;
-    document.querySelector('#Cart').value = JSON.stringify(cart);
+
+    checkout.disabled =
+      Object.keys(cart).length === 0;
+
+    // Preserve existing backend cart format
+    document.querySelector('#Cart').value =
+      JSON.stringify(cart);
   }
 
-  function add(code) {
+  // Add a product to the cart
+  function add(code, focusInput = true) {
     code = code.trim();
+    if (!products.has(code)) code = epcCodes.get(code.toUpperCase()) || code;
+
     const product = products.get(code);
-    if (!product) error.textContent = `Unknown item code: ${code || '(empty)'}. Choose a code from the sample products below.`;
-    else if ((cart[code] || 0) >= product.stock) error.textContent = `${product.name} is out of stock.`;
-    else { cart[code] = (cart[code] || 0) + 1; error.textContent = ''; render(); }
+
+    if (!product) {
+      error.textContent =
+        `Unknown item code: ${code || '(empty)'}. Choose a registered product below.`;
+      return false;
+    }
+
+    if ((cart[code] || 0) >= product.stock) {
+      error.textContent =
+        `${product.name} is out of stock.`;
+      return false;
+    }
+
+    cart[code] = (cart[code] || 0) + 1;
+
+    error.textContent = '';
     codeInput.value = '';
-    codeInput.focus();
+
+    render();
+
+    if (focusInput) {
+      codeInput.focus();
+    }
+
+    return true;
   }
-  document.querySelector('#add-item').addEventListener('click', () => add(codeInput.value));
+
+  // Manual barcode input
+  document.querySelector('#add-item').addEventListener(
+    'click',
+    () => add(codeInput.value)
+  );
+
   codeInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter') { event.preventDefault(); add(codeInput.value); }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      add(codeInput.value);
+    }
   });
-  document.querySelectorAll('.demo-product').forEach(el => el.addEventListener('click', () => add(el.dataset.code)));
+
+  // Existing sample product buttons
+  document.querySelectorAll('.demo-product').forEach(el => {
+    el.addEventListener('click', () => {
+      add(el.dataset.code);
+    });
+  });
+
+  // Handles multiple RFID tag readings
+  function processRfidScan(tags) {
+    let added = 0;
+    let duplicates = 0;
+    let failed = 0;
+
+    const uniqueTags = new Map();
+
+    for (const tag of tags) {
+      if (tag.epc && !uniqueTags.has(tag.epc)) {
+        uniqueTags.set(tag.epc, tag);
+      }
+    }
+
+    for (const tag of uniqueTags.values()) {
+     
+      if (scannedTags.has(tag.epc)) {
+        duplicates++;
+        continue;
+      }
+
+      const product = products.get(tag.code);
+
+      if (!product) {
+        failed++;
+        continue;
+      }
+
+      if ((cart[tag.code] || 0) >= product.stock) {
+        failed++;
+        continue;
+      }
+
+      cart[tag.code] = (cart[tag.code] || 0) + 1;
+
+      scannedTags.set(tag.epc, tag.code);
+      added++;
+    }
+
+    render();
+
+    if (added > 0) {
+      rfidStatus.textContent =
+        `${added} RFID item(s) added successfully.`;
+    } else if (duplicates > 0 && failed === 0) {
+      rfidStatus.textContent =
+        'No new RFID items detected. Already scanned.';
+    } else {
+      rfidStatus.textContent =
+        'No items added. Check product codes and stock.';
+    }
+
+    if (failed > 0) {
+      error.textContent =
+        `${failed} RFID item(s) could not be added.`;
+    } else {
+      error.textContent = '';
+    }
+  }
+
+ 
+  rfidButton.addEventListener('click', () => {
+    rfidStatus.textContent = 'Scanning RFID tags...';
+
+    processRfidScan(demoRfidTags);
+  });
+
   render();
 })();
 

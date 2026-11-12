@@ -77,36 +77,17 @@ Collections and indexes:
 
 Stock is stored on the product (`quantityInStock`) so checkout can read it in one lookup. It changes only through `ReceiveStockAsync` (adds) and `DecrementStockAsync` (removes, atomically, and refuses if there isn't enough).
 
-## For the checkout team
+## Integrated checkout
 
-Inject `IProductRepository` (already registered in `Program.cs`) instead of the hardcoded catalog in `StoreDemo`:
+`StoreDemo` now injects `IProductRepository`; checkout and management load the same persistent products as `/Products`. There is no separate hardcoded catalog or stock reset on restart.
 
-```csharp
-var product = await products.FindByEpcAsync(scannedEpc, ct)   // RFID
-           ?? await products.FindByUpcAsync(scannedUpc, ct);  // barcode
-```
+- UPC is the canonical cart and sale-line code. Manual/keyboard-scanner entry also accepts EPC, case-insensitively, and consolidates UPC/EPC aliases for the same product. Each entry adds one unit.
+- **Simulate RFID scan** builds virtual physical-item tags from up to two in-stock products. Distinct virtual tags for the same product count as separate units; reading the same virtual tag again does not duplicate it. These virtual identities are not the product-level EPC stored in inventory, and no physical RFID connection is claimed.
+- Checkout reloads product prices and validates quantities on the server. Approved payment reserves stock through `DecrementStockManyAsync`; a shortage restores any items already reserved. Declined attempts save a record without reserving stock.
+- Receipt insertion and registered-customer loyalty increments commit together in a MongoDB transaction. Atlas or a replica set is required. One point is earned per whole dollar of an approved registered-customer purchase; guest and declined purchases earn none.
+- A confirmed failed sale restores reserved inventory. An unconfirmable transaction outcome retains the reservation and instructs staff to check the receipt before retrying. Email/status-indicator failures cannot turn a committed purchase into a failed payment.
+- Receipts and customer history remain available from `/Checkout`; SMTP receipt delivery is optional. `/Management` excludes declined attempts from its displayed revenue.
 
-When the payment is approved, take the whole cart out of stock in one call. It's all or nothing: if any item is short, nothing is removed.
+Delivery receiving compensates a rejected stock update by removing its history entry. Undo atomically claims the history entry so simultaneous requests cannot deduct stock twice; a rejected undo restores the entry.
 
-```csharp
-// cart: product id -> quantity
-var result = await products.DecrementStockManyAsync(cart, ct);
-if (!result.Succeeded)
-    throw new InvalidOperationException(result.Message); // e.g. "Not enough Whole Milk 2L in stock (1 left, 2 requested)."
-
-try
-{
-    await sales.InsertOneAsync(sale, cancellationToken: ct);
-}
-catch
-{
-    await products.RestoreStockAsync(cart, CancellationToken.None); // sale not saved -> put stock back
-    throw;
-}
-```
-
-Don't call it for a declined payment.
-
-- Use the product's **UPC as the cart code** (replaces `1001`–`1004`).
-- **Each product has one EPC.** When the RFID reader sees the same EPC more than once in a single scan, that means more than one of that product, so count repeats as quantity rather than discarding them as duplicates.
-- `GetAllAsync()` returns every product with its current `QuantityInStock`.
+**Consistency limit:** inventory reservation and the receipt/loyalty transaction are separate operations; receiving and undo also use compensating writes across documents. They are not crash-atomic transactions. Process crashes, ambiguous database responses, or failed compensation may require staff reconciliation; failure messages must not be treated as permission to retry blindly.

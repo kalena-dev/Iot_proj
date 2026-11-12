@@ -1068,7 +1068,7 @@ select:focus-visible {
 .checkout-sample-price { font-size:1rem !important; font-weight:800; color:#193d48 !important; margin:0 !important; }
 .checkout-sample-meta { font-size:.72rem !important; color:var(--muted); margin:0 !important; }
 @media(max-width:820px) { .checkout-layout { grid-template-columns:1fr; } .checkout-sample-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .checkout-heading { align-items:flex-start; } }
-@media(max-width:520px) { .checkout-card { padding:17px; } .checkout-heading { display:block; } .checkout-demo-label { display:inline-block; margin-top:12px; } .checkout-samples-head { align-items:flex-start; } .checkout-sample-grid { gap:8px; } }
+@media(max-width:520px) { .checkout-card { padding:17px; } .checkout-heading { display:block; } .checkout-demo-label { display:inline-block; margin-top:12px; } .checkout-samples-head { align-items:flex-start; } .checkout-sample-grid { gap:8px; } .checkout-scan-line { flex-direction:column; } .checkout-scan-line input { flex:auto; width:100%; } }
 
 /* Checkout-only viewport fit. Other pages retain their original spacing.
    At smaller viewports the page scrolls normally rather than hiding controls. */
@@ -1132,3 +1132,5 @@ select:focus-visible {
 }
 
 .checkout-points-note { margin: 2px 0 6px; font-size: .76rem; line-height: 1.35; color: #66778a; }
+.checkout-rfid { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
+.checkout-rfid span { color:var(--muted); font-size:.73rem; }
