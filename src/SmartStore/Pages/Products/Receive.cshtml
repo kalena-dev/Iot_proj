@@ -1,0 +1,142 @@
+@page "{id?}"
+@model SmartStore.Pages.Products.ReceiveModel
+@{
+    ViewData["Title"] = "Receive stock";
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero">
+    <div class="hero__copy">
+        <span class="eyebrow">Inventory · receiving</span>
+        <h1>Receive stock</h1>
+        <p>Record each delivery. The quantity is added to the product's stock and kept in its delivery history.</p>
+    </div>
+    <div class="products-actions">
+        <a class="secondary-button" asp-page="Index">← All products</a>
+    </div>
+</section>
+
+<partial name="_StatusNotice" model="(Model.StatusMessage, Model.StatusKind)" />
+
+@if (Model.DatabaseWarning is not null)
+{
+    <section class="panel form-panel"><p class="system-warning" role="alert">@Model.DatabaseWarning</p></section>
+}
+else if (Model.AllProducts.Count == 0)
+{
+    <section class="panel form-panel">
+        <div class="empty-state">
+            <strong>No products yet.</strong>
+            <span><a asp-page="Create">Add a product</a> before receiving stock.</span>
+        </div>
+    </section>
+}
+else
+{
+    <div class="workspace">
+        <section class="panel form-panel">
+            <form method="get" class="products-filter scan-lookup" asp-route-id="">
+                <label for="Code">Scan a barcode or RFID tag to find the product</label>
+                <div>
+                    <input asp-for="Code" type="search" placeholder="UPC or EPC" autocomplete="off" data-scan-submit autofocus="@(Model.Selected is null)" />
+                    <button type="submit" class="secondary-button">Find</button>
+                </div>
+            </form>
+
+            <form method="post" id="receive-form">
+                <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
+                <fieldset>
+                    <legend>Delivery</legend>
+                    <div class="form-grid">
+                        <div class="field field--wide">
+                            <label asp-for="Input.ProductId"></label><span class="required-mark" aria-hidden="true">*</span>
+                            <select asp-for="Input.ProductId" data-navigate-receive>
+                                <option value="">Choose a product…</option>
+                                @foreach (var product in Model.AllProducts)
+                                {
+                                    <option value="@product.Id">@product.Name · UPC @product.Upc · @product.QuantityInStock in stock</option>
+                                }
+                            </select>
+                            <span asp-validation-for="Input.ProductId" class="field-error"></span>
+                        </div>
+                        <div class="field">
+                            <label asp-for="Input.Quantity"></label><span class="required-mark" aria-hidden="true">*</span>
+                            <input asp-for="Input.Quantity" type="number" min="1" max="9999" placeholder="24" autofocus="@(Model.Selected is not null)" />
+                            <span asp-validation-for="Input.Quantity" class="field-error"></span>
+                        </div>
+                        <div class="field">
+                            <label asp-for="Input.ReceivedOn"></label><span class="required-mark" aria-hidden="true">*</span>
+                            <input asp-for="Input.ReceivedOn" type="date" max="@DateTime.Today.ToString("yyyy-MM-dd")" />
+                            <span asp-validation-for="Input.ReceivedOn" class="field-error"></span>
+                        </div>
+                        <div class="field">
+                            <label asp-for="Input.ExpiresOn"></label>
+                            <input asp-for="Input.ExpiresOn" type="date" />
+                            <span asp-validation-for="Input.ExpiresOn" class="field-error"></span>
+                        </div>
+                        <div class="field">
+                            <label asp-for="Input.Note"></label>
+                            <input asp-for="Input.Note" placeholder="Supplier, invoice #…" />
+                            <span asp-validation-for="Input.Note" class="field-error"></span>
+                        </div>
+                    </div>
+                </fieldset>
+                <div class="form-actions">
+                    <span></span>
+                    <button type="submit" class="primary-button">Receive stock</button>
+                </div>
+            </form>
+        </section>
+
+        <aside class="sidebar">
+            <section class="panel status-panel receive-history">
+                @if (Model.Selected is null)
+                {
+                    <div class="panel__heading"><h2>Delivery history</h2></div>
+                    <p class="products-count">Choose or scan a product to see its deliveries.</p>
+                }
+                else
+                {
+                    var product = Model.Selected;
+                    <div class="panel__heading"><h2>@product.Name</h2></div>
+                    <p class="stock-summary"><span>@product.QuantityInStock</span> in stock</p>
+                    <p class="products-count">
+                        @Model.History.Count delivery(ies) · @Model.History.Sum(r => r.Quantity) unit(s) received in total
+                    </p>
+                    @if (Model.History.Count == 0)
+                    {
+                        <p class="products-count">No deliveries yet.</p>
+                    }
+                    <ul class="history-list">
+                        @foreach (var reception in Model.History)
+                        {
+                            <li>
+                                <div>
+                                    <strong>+@reception.Quantity</strong>
+                                    <span>@reception.ReceivedOn.ToString("yyyy-MM-dd")</span>
+                                </div>
+                                @if (reception.ExpiresOn is { } expires) { <small>Expires @expires.ToString("yyyy-MM-dd")</small> }
+                                @if (reception.Note is not null) { <small>@reception.Note</small> }
+                                <details class="confirm-delete">
+                                    <summary>Undo</summary>
+                                    <div class="confirm-delete__box">
+                                        <p>Remove this delivery and take @reception.Quantity off the stock?</p>
+                                        <form method="post" asp-page-handler="Undo" asp-route-receptionId="@reception.Id" asp-route-productId="@product.Id">
+                                            <button type="submit" class="danger-button">Yes, remove</button>
+                                        </form>
+                                    </div>
+                                </details>
+                            </li>
+                        }
+                    </ul>
+                    <a asp-page="Edit" asp-route-id="@product.Id">Edit product details →</a>
+                }
+            </section>
+        </aside>
+    </div>
+}
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script src="~/js/products.js" asp-append-version="true"></script>
+}

@@ -1,0 +1,66 @@
+@* Fields shared by Create and Edit. Rendered with <partial name="_ProductForm" for="Input" /> so names stay "Input.X". *@
+@model SmartStore.Models.ProductInput
+@{
+    var categories = ViewData["Categories"] as IEnumerable<string> ?? [];
+}
+<fieldset>
+    <legend>Product details</legend>
+    <div class="form-grid">
+        <div class="field field--wide">
+            <label asp-for="Name"></label><span class="required-mark" aria-hidden="true">*</span>
+            <input asp-for="Name" placeholder="Coca-Cola 500ml" autocomplete="off" />
+            <span asp-validation-for="Name" class="field-error"></span>
+        </div>
+        <div class="field">
+            <label asp-for="Category"></label><span class="required-mark" aria-hidden="true">*</span>
+            <input asp-for="Category" placeholder="Beverage" list="category-options" autocomplete="off" />
+            <datalist id="category-options">
+                @foreach (var category in categories) { <option value="@category"></option> }
+            </datalist>
+            <span asp-validation-for="Category" class="field-error"></span>
+        </div>
+        <div class="field">
+            <label asp-for="Price"></label><span class="required-mark" aria-hidden="true">*</span>
+            <input asp-for="Price" type="number" step="0.01" min="0.01" max="99999.99" placeholder="2.49" />
+            <span asp-validation-for="Price" class="field-error"></span>
+        </div>
+        <div class="field field--wide">
+            <label asp-for="Producer"></label><span class="required-mark" aria-hidden="true">*</span>
+            <input asp-for="Producer" placeholder="Coca-Cola Company" autocomplete="off" />
+            <span asp-validation-for="Producer" class="field-error"></span>
+        </div>
+    </div>
+</fieldset>
+
+<fieldset>
+    <legend>Codes</legend>
+    <p class="field-hint">Click a box, then scan. The barcode scanner fills the UPC; the RFID reader fills the EPC.</p>
+    <div class="form-grid">
+        <div class="field">
+            <label asp-for="Upc"></label><span class="required-mark" aria-hidden="true">*</span>
+            <input asp-for="Upc" data-scan inputmode="numeric" maxlength="13" placeholder="049000028911" autocomplete="off" class="code-input" />
+            <span asp-validation-for="Upc" class="field-error"></span>
+        </div>
+        <div class="field">
+            <label asp-for="Epc"></label><span class="required-mark" aria-hidden="true">*</span>
+            <input asp-for="Epc" data-scan maxlength="24" placeholder="E28011606000020A1B2C3D4E" autocomplete="off" class="code-input" />
+            <span asp-validation-for="Epc" class="field-error"></span>
+        </div>
+    </div>
+</fieldset>
+
+<fieldset>
+    <legend>Extra information (optional)</legend>
+    <div class="form-grid">
+        <div class="field field--wide">
+            <label asp-for="Description"></label>
+            <input asp-for="Description" placeholder="Classic soft drink, plastic bottle" />
+            <span asp-validation-for="Description" class="field-error"></span>
+        </div>
+        <div class="field field--wide">
+            <label asp-for="ImageUrl"></label>
+            <input asp-for="ImageUrl" type="url" placeholder="https://…/coke.jpg" />
+            <span asp-validation-for="ImageUrl" class="field-error"></span>
+        </div>
+    </div>
+</fieldset>

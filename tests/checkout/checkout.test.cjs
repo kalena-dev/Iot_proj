@@ -12,11 +12,17 @@ function setup(mode = 'simulation', tags = []) {
     focus() {}
     click() { this.handlers.click(); }
   }
-  const selectors = Object.fromEntries(['#item-code', '#scan-error', '#cart-list', '#cart-total', '#checkout-button', '#rfid-scan', '#rfid-status', '#Cart', '#add-item', '.rfid-scanner'].map(s => [s, new Element()]));
+  const selectors = Object.fromEntries(['#item-code', '#barcode-match', '#barcode-product', '#scan-error', '#cart-list', '#cart-total', '#checkout-button', '#rfid-scan', '#rfid-status', '#Cart', '#add-item', '.rfid-scanner'].map(s => [s, new Element()]));
+  selectors['#barcode-match'].hidden = true;
+  selectors['#item-code'].dataset.epcProducts = JSON.stringify({E2801191A503006599BFD10D: '1002'});
   selectors['.rfid-scanner'].dataset = {mode, session: 'private-session'};
   const products = ['1001', '1002'].map(code => new Element({code, name: code, price: '1.00', stock: '3'}));
   let nextPoll;
-  const document = { querySelector: s => selectors[s], querySelectorAll: () => products, createElement: () => new Element() };
+  const details = new Map();
+  const document = { getElementById: id => {
+    if (!details.has(id)) details.set(id, new Element());
+    return details.get(id);
+  }, querySelector: s => selectors[s], querySelectorAll: () => products, createElement: () => new Element() };
   const context = {document, Intl, URL, URLSearchParams, window: {location: {href: 'https://store/Checkout'}, setTimeout: fn => {nextPoll = fn;}}, fetch: async (url, options) => {
     assert.equal(options.headers['X-Rfid-Session'], 'private-session');
     assert.equal(url.searchParams.has('session'), false);
@@ -52,4 +58,32 @@ test('reader polling deduplicates physical tags and does not re-add removed tags
   ui.selectors['#cart-list'].children[0].children[1].click();
   await ui.poll();
   assert.deepEqual(ui.cart(), {'1001': 1});
+});
+
+test('typed EPC and reader scan count the same physical item once', async () => {
+  const ui = setup('reader', [{epc: 'E2801191A503006599BFD10D', code: '1002'}]);
+  const input = ui.selectors['#item-code'];
+  input.value = ' e2801191a503006599bfd10d ';
+  input.handlers.keydown({key: 'Enter', preventDefault() {}});
+  assert.deepEqual(ui.cart(), {'1002': 1});
+  await new Promise(resolve => setImmediate(resolve));
+  input.value = 'E2801191A503006599BFD10D';
+  ui.selectors['#add-item'].click();
+  assert.deepEqual(ui.cart(), {'1002': 1});
+});
+
+test('an unrecognized barcode of any format can be assigned a product for this cart', () => {
+  const ui = setup();
+  for (const barcode of ['X', '00001/case-XL']) {
+    ui.selectors['#item-code'].value = barcode;
+    ui.selectors['#item-code'].handlers.input();
+    ui.selectors['#add-item'].click();
+    assert.equal(ui.selectors['#barcode-match'].hidden, false);
+    ui.selectors['#barcode-product'].value = '1001';
+    ui.selectors['#add-item'].click();
+    assert.equal(ui.selectors['#barcode-match'].hidden, true);
+  }
+  ui.selectors['#item-code'].value = 'X';
+  ui.selectors['#add-item'].click();
+  assert.deepEqual(ui.cart(), {'1001': 3});
 });

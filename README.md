@@ -1,4 +1,4 @@
-# Northstar Smart Store — Phases 1 & 2
+# Northstar Smart Store — Phases 1, 2 & 3
 
 A C#/.NET 8 IoT application for the Vanier College **420-521-VA** final project. It captures customer information in a Razor Pages web form, saves it to MongoDB Atlas, and signals the result through Raspberry Pi 5 GPIO outputs.
 
@@ -9,6 +9,13 @@ A C#/.NET 8 IoT application for the Vanier College **420-521-VA** final project.
 The existing store now includes `/Refrigerators`: four live temperature/humidity gauges, independent MongoDB-backed thresholds, email alerts and YES-reply approval, system notifications, and an acknowledged Raspberry Pi motor output. The TypeScript MQTT service matches the supplied draw.io architecture; both ESP32 boards publish DHT11 measurements on `Frig1` and `Frig2`, using each board's **GPIO26**. Boards automatically discover the local MQTT broker over mDNS, so server IP changes do not require reflashing. Classic ESP32s require **2.4 GHz WiFi**.
 
 New components: `iot-server/` (TypeScript MQTT/MongoDB/SMTP/IMAP), `firmware/FridgeSensor/` (ESP32 sketch), and `pi/` (motor driver adapter and deployment templates). Real sensors, motor wiring and SMTP/IMAP credentials must be configured for the lab. Simulation is explicitly labeled and never presented as physical motor operation.
+
+## Phase 3: inventory and self-checkout
+
+The inventory, checkout/loyalty, and RFID simulation branches are integrated. `/Products` registers products and receives deliveries; `/Checkout` sells that same MongoDB-backed stock using UPC or EPC codes. `/Management` shows the shared inventory and recent checkout records. See [the inventory and checkout contract](docs/PHASE3-inventory.md).
+
+Approved purchases save an itemized receipt and award registered customers one loyalty point per whole dollar. Declined attempts are recorded without changing stock or points. Receipt lookup and purchase history are available inline; email delivery uses the existing optional SMTP settings. This remains an unsecured classroom simulation, not a real payment system.
+
 
 ## Phase 1 architecture decisions
 
@@ -82,6 +89,9 @@ Set `Gpio:BuzzerMode` to `Passive` (default) for the kit's passive buzzer; it us
 
 The repository's local `.env` is ignored by Git. Both services load configuration in this order: process environment, the file named by `MONGODB_ENV_FILE` (if set), repository `.env`, then `$XDG_CONFIG_HOME/northstar/credentials.env` (default `$HOME/.config/northstar/credentials.env`). Earlier values win. No particular username or checkout location is required. Credentials stay outside the compiled app.
 
+Checkout, delivery receiving/undo, and product/history deletion use MongoDB transactions, so use Atlas or a replica set, not a standalone `mongod`. Approved checkout commits stock, receipt, and loyalty points together. To keep the credential file outside the checkout, set `MONGODB_ENV_FILE` to its absolute path before starting either service.
+
+
 ## Run on a development computer
 
 Install the .NET 8 SDK, then run:
@@ -99,6 +109,18 @@ Check MongoDB connectivity without exposing credentials:
 ```bash
 curl http://localhost:5198/health
 ```
+
+### Database regression checks
+
+The database integration tests require an explicitly configured **local replica set**:
+
+```bash
+SMARTSTORE_TEST_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0" \
+  dotnet test tests/SmartStore.Tests/SmartStore.Tests.csproj -c Release
+```
+
+These tests reject remote/Atlas URIs and use isolated, randomly named databases. They cover receiving, unique product codes, approved/declined checkout, stock/loyalty rollback, concurrent overselling/undo, cancellation, and visibility of uncommitted writes from a separate client. Without this variable, the database tests are explicitly skipped; ordinary tests still run.
+
 
 ## Run on Raspberry Pi 5
 
@@ -132,7 +154,11 @@ Copy `publish/pi` and an untracked `.env` to the Pi, then start `./SmartStore` w
 
 ## Self-checkout classroom demo
 
-Open `/Checkout` for the customer flow and `/Management` for inventory and sales. Enter or scan a sample code (1001 Apple, 1002 Bread, 1003 Milk, 1004 Chocolate bar), add items, and choose **Approve** or **Decline** for the simulated payment. No payment API or card details are used. Approved checkouts save a sale in MongoDB's `demo_sales` collection, reduce the in-memory stock, and flash the blue LED. Declines and checkout failures trigger the red LED and buzzer. The management page shows recent demo sales and lets you change stock for testing. Stock resets to the sample values when the app restarts; sales remain in MongoDB. This is a classroom simulation, not a production checkout or secured management interface.
+Open `/Products` to register products with unique UPC/EPC codes, then **Receive** a delivery to make them available. Open `/Checkout`, enter a UPC or EPC (a keyboard-style scanner also works), or select a product card. **Simulate RFID scan** reads distinct virtual item tags for up to two in-stock products from this catalog; repeated scans do not add the same virtual tags twice. It does not connect to a physical RFID reader.
+
+Choose **Approve** or **Decline** for the simulated payment. Both outcomes save records in MongoDB's `demo_sales`; only approvals reduce persistent inventory. An optional registered customer email earns loyalty points on approval and enables purchase-history lookup. View the itemized receipt inline after approval. SMTP must be configured and `EMAIL_ENABLED=true` for receipt emails; missing or failed email does not undo a successful checkout. Approved checkout signals the blue LED; decline/failure signals red LED and buzzer when hardware is enabled.
+
+Use `/Management` to review inventory and recent sales, and `/Products` to edit details or receive/undo deliveries. Stock no longer resets when the app restarts and cannot be overwritten with an arbitrary stock value. This is a classroom simulation, not a production checkout or secured management interface.
 
 ## Demonstration checklist
 

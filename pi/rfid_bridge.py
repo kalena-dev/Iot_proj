@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Forward newline-delimited JSON EPC arrays from a separate reader adapter.
 
-No CF600 SDK calls or fabricated fallback readings. Retrying a batch is safe.
+Use --sdk for continuous inventory with the vendor CLI.
 """
+import argparse
+from contextlib import closing
 import json
 import os
 import sys
 import time
+from urllib.error import HTTPError
 import urllib.request
 from urllib.parse import urlparse
 
@@ -28,29 +31,47 @@ def send(epcs, url, key, session):
         return response.status
 
 
+def sdk_batches(sdk_dir, port):
+    from cf600_sdk import DEFAULT_SDK, inventory
+    while True:
+        yield from inventory(sdk_dir or DEFAULT_SDK, port)
+
+
 def main():
-    url = os.environ['RFID_SERVER_URL']
-    key = os.environ['RFID_API_KEY']
-    session = os.environ['RFID_SESSION']
-    if len(key) < 32:
-        raise ValueError('RFID_API_KEY must be at least 32 characters')
-    for line in sys.stdin:
-        if not line.strip():
-            continue
-        try:
-            epcs = json.loads(line)
-            for attempt in range(3):
-                try:
-                    send(epcs, url, key, session)
-                    break
-                except (OSError, TimeoutError):
-                    if attempt == 2:
-                        raise
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sdk', action='store_true', help='drive CDemo.out over its COM interface')
+    parser.add_argument('--sdk-dir', help='directory containing CDemo.out and its shared libraries')
+    parser.add_argument('--port', default='/dev/ttyUSB0')
+    args = parser.parse_args()
+    url = os.environ.get('RFID_SERVER_URL')
+    key = os.environ.get('RFID_API_KEY', '')
+    session = os.environ.get('RFID_SESSION')
+    if not url or len(key) < 32 or not session:
+        parser.exit(2, 'Set RFID_SERVER_URL, RFID_SESSION and a 32-character or longer RFID_API_KEY.\n')
+    batches = (sdk_batches(args.sdk_dir, args.port) if args.sdk else
+               (json.loads(line) for line in sys.stdin if line.strip()))
+    try:
+        with closing(batches):
+            for epcs in batches:
+                for attempt in range(3):
+                    try:
+                        send(epcs, url, key, session)
+                        break
+                    except HTTPError as error:
+                        if error.code < 500 or attempt == 2:
+                            raise
+                    except OSError:
+                        if attempt == 2:
+                            raise
                     time.sleep(1)
-        except (ValueError, OSError, TimeoutError):
-            # Do not log secrets, session capabilities, or raw RFID contents.
-            print('RFID batch rejected or delivery failed; check pairing, mapping and connectivity.', file=sys.stderr)
-            return 1
+    except KeyboardInterrupt:
+        return 130
+    except HTTPError as error:
+        print(f'RFID delivery failed (HTTP {error.code}). Check the mapping (400), key/mode (401), or pairing (404).', file=sys.stderr)
+        return 1
+    except (ValueError, OSError) as error:
+        print(f'RFID bridge stopped: {error}', file=sys.stderr)
+        return 1
     return 0
 
 

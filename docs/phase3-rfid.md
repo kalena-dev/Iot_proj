@@ -1,29 +1,79 @@
 # Phase 3 RFID: Pi reader, MacBook checkout
 
-## Existing integration and this change
+## Run the Atlas checkout on one Pi
 
-The current `fahad-phase3-checkout` branch already contains these uncommitted
-components, which this serial integration reuses:
+From the repository root run `pi/start-checkout.sh`, then open
+`http://127.0.0.1:5080/Checkout`. The launcher builds the current checkout and
+starts the web and reader services. Set `MONGODB_ENV_FILE` to your private file
+containing `MONGODB_URI` or use `~/.config/northstar/checkout-atlas.env`.
+Local checkout pages pair automatically. Enter a registered EPC or UPC directly.
+For an unfamiliar barcode, choose an inventory product and select **Add item**.
+This manual association lasts for the current cart. For automatic hardware scans,
+register the EPC on the product or configure an alias to its existing inventory UPC.
 
-- `Services/RfidCheckout.cs`: `Rfid:EpcProducts` maps EPCs to existing product
-  codes; `/api/rfid/events` accepts authenticated EPC batches for a paired session.
-- `Pages/Checkout.cshtml.cs`: `OnGetRfid` supplies tags to that checkout page.
-- `wwwroot/js/checkout.js`: `pollReader` calls `processRfidScan`, which adds the
-  mapped products through the existing cart and stock logic and remembers EPCs.
-- `pi/rfid_bridge.py`: JSON lines on stdin -> authenticated HTTP events.
+An approved payment displays its itemized receipt. **Management → Recent sales**
+includes guest orders and links to their receipts. **Purchase history** searches by
+registered customer email.
 
-The missing reader is now `pi/cf600_reader.py`. It uses the classroom PDF's CF
-frame parser and the settings demonstrated by the user on a Raspberry Pi 5:
-`/dev/ttyUSB0`, 115200 baud, inventory bytes `04 FF 01 1B B4`, 0.5-second polling,
-serial timeout 0.5 seconds. It outputs JSON EPC arrays, never sample readings.
-The prior CFApi HID SDK timeouts are not used by this serial path. No vendor SDK,
-RF setting changes, firmware changes, or teammates' backend rewrites are needed.
+## Vendor CLI on the Pi
 
-The user reported a real EPC read in class. The serial script and live checkout
-integration still need verification on that hardware. Like the provided demo,
-the parser checks frame length/status/EPC length but does not verify response CRC;
-the setup guide does not specify its algorithm. Tests use synthetic frames, not
-captured hardware responses.
+The ARM64 SDK's `CDemo.out` successfully inventoried the classroom CF600 using
+its **COM** menu option on `/dev/ttyUSB0` at 115200. The USB cable stays connected.
+The checkout bridge drives that menu, reads each complete `Data:` record, and
+posts each new EPC to the paired checkout while the inventory is running.
+The app resolves product codes and deduplicates across inventory cycles.
+
+1. On the Pi, from `~/Iot_proj`, check the device and run one inventory:
+
+   ```sh
+   lsusb -d 0483:5750
+   ls -l /dev/ttyUSB0
+   # If the reader is listed but the serial port is missing:
+   # sudo modprobe usbserial vendor=0x0483 product=0x5750
+   python3 pi/cf600_sdk.py
+   ```
+
+   The adapter uses the SDK in `~/Downloads/UHF Desk Reader SDK/Sample/CDemo/Source/ARM64`.
+   Use `--sdk-dir` or `--port` if needed. The process runs as your login user
+   with serial-port access. Close any other reader program first. Each printed
+   JSON array contains an EPC. The CLI performs 100 reads per cycle and can
+   take several minutes without tags. It prints only the first 12 bytes of an
+   EPC. For longer tags use `cf600_reader.py` as described below.
+
+2. On the SmartStore host, set Reader mode, a private key, and a product
+   mapping for each physical tag in range. Step 1 below shows the server
+   command. For example, this shell-only mapping assigns a tag observed on
+   the Pi to UPC 1001, if that UPC exists in the inventory:
+
+   ```sh
+   export Rfid__EpcProducts__E2801191A503006599BFCCFD=1001
+   ```
+
+3. Open `/Checkout` and keep that page open. On the Pi set the three bridge
+   environment variables as in step 4 below. For checkout running on the Pi
+   at port 5080, use `RFID_SERVER_URL=http://127.0.0.1:5080`. For checkout
+   on the Mac use the SSH tunnel below. Then run:
+
+   ```sh
+   cd ~/Iot_proj
+   python3 pi/rfid_bridge.py --sdk
+   ```
+
+   If you deploy the bridge separately, copy `pi/cf600_sdk.py` alongside
+   `pi/rfid_bridge.py`. The bridge repeats inventory until Ctrl-C or a
+   reader/delivery error. For HTTP 400 check the product mapping for each EPC
+   from step 1. After checkout, pair the bridge to the new page.
+
+For a Windows fallback, use the vendor GUI to inventory and copy a complete
+EPC. With Python installed, the existing bridge also accepts JSON on stdin.
+In PowerShell set `$env:RFID_SERVER_URL`, `$env:RFID_API_KEY` and
+`$env:RFID_SESSION` to the paired checkout values, then from the repo run
+`'["E2801191A503006599BFCCFD"]' | py -3 pi/rfid_bridge.py` with the actual
+mapped EPC from the GUI. This is a manual transfer. Use HTTPS for a remote
+checkout or an SSH tunnel to loopback.
+
+The raw serial adapter below remains available as a second reader option. It
+parses the classroom protocol and sends JSON arrays to the same bridge.
 
 ## Run in order
 
@@ -52,17 +102,13 @@ Keep this terminal running. The existing private `.env` MongoDB settings are loa
 by `DotEnvLoader`; retain your working `MONGODB_URI`. Do not replace it or paste it
 into chat. GPIO is disabled on the Mac; this does not remotely drive the Pi LEDs.
 
-The `Rfid__EpcProducts__...=1001` line is the **optional test association** you
-requested: your physically read tag maps to the existing Apple product (code
-1001 in `StoreDemo`). It configures the existing lookup in this terminal only;
-it does not hardcode the EPC in application source or create a new product.
-Change `1001` to another existing code (1002 Bread, 1003 Milk, 1004 Chocolate bar)
-if desired. Add another mapping variable for every other physical EPC. Restart
-the app after changing mappings. Do not give an EPC a product code in Python.
+Use an existing UPC from **Products** as the value of any optional EPC alias.
+Registered product EPCs take precedence. Reopen checkout after changing inventory
+or restarting the app.
 
-### 2. MacBook terminal B: copy the actual uncommitted reader files to the Pi
+### 2. MacBook terminal B: copy the reader files to the Pi if needed
 
-A `git pull` on the Pi cannot retrieve uncommitted files. Copy these two scripts:
+Skip the copy if the Pi already has the scripts. For the raw serial option:
 
 ```sh
 cd /Users/macbook/Documents/GitHub/Iot_proj
@@ -85,7 +131,7 @@ an older tunnel first; do not continue after a forwarding failure.
 ### 3. MacBook browser: obtain the pairing session
 
 Open `http://127.0.0.1:5080/Checkout`. Confirm **Reader mode** and copy the value
-under **Pair this checkout with the Pi**. Keep that page open. Each reload creates
+under **Pair reader manually**. Keep that page open. Each reload creates
 a new session, and each session expires after 30 minutes. Treat both the pairing
 value and API key as private credentials.
 
@@ -145,16 +191,16 @@ the pipeline. No-response inventories produce no fabricated EPC or fallback data
 ### 5. Live acceptance in class
 
 1. Verify the reader-only script reports your actual tag, then use the pipeline.
-2. Verify one mapped tag adds one Apple and stays at one while held there.
+2. Verify one mapped tag adds one unit of its product and stays at one while held there.
 3. Verify a second mapped physical tag adds its own item; retry inventory without
    increasing either tag's quantity.
 4. Verify manual entry/removal and insufficient-stock behavior still work.
-5. With your working MongoDB connection, test decline (no sale) then approve
+5. With your working MongoDB connection, test decline (declined attempt recorded) then approve
    (sale saved, stock reduced) using the existing demo payment controls.
 6. After checkout/reload, stop the pipeline, copy the new pairing session, and
    restart. For the next customer, remove the previous customer's tags first.
 
-These are live checks to perform, not claims of tests already run locally.
+Repeat these checks when changing the reader, mapping or deployment.
 
 ## Modes, security and limits
 
@@ -180,7 +226,7 @@ This is the existing classroom checkout, not a production payment system.
 dotnet build SmartStore.sln --no-restore --disable-build-servers -m:1 -p:UseSharedCompilation=false
 dotnet test SmartStore.sln --no-build --no-restore
 node --test tests/checkout/checkout.test.cjs
-python3 -m unittest discover -s pi -p 'test_cf600_reader.py'
+python3 -m unittest discover -s pi -p 'test_cf600*.py'
 python3 -m unittest discover -s pi -p 'test_rfid_bridge.py'
 ```
 

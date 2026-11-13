@@ -17,10 +17,11 @@ public sealed record RfidBatch(string? Session, string[]? Epcs);
 // One process, one checkout session per page. No native reader SDK dependencies.
 public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clock)
 {
-    private sealed record Session(DateTimeOffset Expires, Dictionary<string, RfidTag> Tags);
+    private sealed record Session(DateTimeOffset Expires, Dictionary<string, RfidTag> Tags, Dictionary<string, string> Products);
     private readonly Dictionary<string, Session> sessions = new();
     private readonly object gate = new();
     public bool IsSimulation => options.Value.Mode == "Simulation";
+    public IReadOnlyDictionary<string, string> EpcProducts => options.Value.EpcProducts;
     public bool IsReader => options.Value.Mode == "Reader";
 
     public bool Authenticate(string key)
@@ -31,7 +32,7 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
                 SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
     }
 
-    public string Open()
+    public string Open(IReadOnlyList<DemoProduct>? products = null)
     {
         lock (gate)
         {
@@ -39,7 +40,12 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
                 sessions.Remove(key);
             if (sessions.Count >= 100) throw new InvalidOperationException("RFID session capacity reached. Try again later.");
             var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-            sessions[token] = new(clock.GetUtcNow().AddMinutes(30), new(StringComparer.Ordinal));
+            var mappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (epc, code) in EpcProducts)
+                if (products is null || products.Any(p => p.Code == code)) mappings[epc.Trim()] = code;
+            if (products is not null)
+                foreach (var product in products) mappings[product.Epc.Trim()] = product.Code;
+            sessions[token] = new(clock.GetUtcNow().AddMinutes(30), new(StringComparer.Ordinal), mappings);
             return token;
         }
     }
@@ -61,7 +67,7 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
         {
             if (!sessions.TryGetValue(batch.Session, out var session) || session.Expires <= clock.GetUtcNow()) return false;
             var mapped = epcs.Select(epc => new RfidTag(epc,
-                options.Value.EpcProducts.FirstOrDefault(x => Normalize(x.Key) == epc).Value
+                session.Products.GetValueOrDefault(epc)
                     ?? throw new ArgumentException("An EPC has no configured product mapping."))).ToArray();
             if (session.Tags.Keys.Union(epcs).Count() > 100)
                 throw new ArgumentException("Session tag limit reached.");
