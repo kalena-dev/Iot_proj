@@ -13,9 +13,9 @@
     <div class="checkout-layout">
         <section class="checkout-card checkout-cart" aria-label="Shopping cart">
             <div class="checkout-card-head"><div><span class="checkout-step">01 / SHOPPING CART</span><h2>Your cart</h2></div><span class="checkout-chip">Ready to scan</span></div>
-            <div class="checkout-scan"><label for="item-code">Barcode, EPC, or product code</label><div class="checkout-scan-line"><input id="item-code" type="text" spellcheck="false" data-epc-products="@System.Text.Json.JsonSerializer.Serialize(Model.EpcProducts)" autocomplete="off" placeholder="Scan or type a code" autofocus /><button type="button" class="primary-button" id="add-item">Add item</button></div></div>
+            <div class="checkout-scan"><label for="item-code">Barcode, EPC, or product code</label><div class="checkout-scan-line"><input id="item-code" type="text" spellcheck="false" autocomplete="off" placeholder="Scan or type a code" autofocus /><button type="button" class="primary-button" id="add-item">Add item</button></div></div>
             <label id="barcode-match" hidden>
-                Choose the product for this barcode
+                Choose the product to save this code in inventory
                 <select id="barcode-product">
                     <option value="">Select a product</option>
                     @foreach (var item in Model.Products)
@@ -42,7 +42,7 @@
                 <input type="hidden" asp-for="Cart" />
                 <label for="CustomerEmail">Email for receipt <span>(optional)</span></label>
                 <input asp-for="CustomerEmail" type="email" maxlength="254" placeholder="Enter your email address" />
-                <p class="checkout-points-note">Anyone can receive a receipt. Registered customers also earn loyalty points.</p>
+                <p class="checkout-points-note">Enter your email to receive a receipt and earn loyalty points. Your first approved purchase creates your loyalty account.</p>
                 <label for="PaymentResult">Simulated payment</label>
                 <select asp-for="PaymentResult"><option value="approve">Approve payment</option><option value="decline">Decline payment</option></select>
                 <button type="submit" class="primary-button checkout-submit" id="checkout-button" disabled>Complete checkout</button>
@@ -88,7 +88,7 @@
             }
             @foreach (var item in Model.Products)
             {
-                <button type="button" class="demo-product checkout-sample" data-code="@item.Code" data-epc="@item.Epc" data-name="@item.Name" data-price="@item.Price.ToString(System.Globalization.CultureInfo.InvariantCulture)" data-stock="@item.Stock" @(item.Stock == 0 ? "disabled" : null)>
+                <button type="button" class="demo-product checkout-sample" data-code="@item.Code" data-name="@item.Name" data-price="@item.Price.ToString(System.Globalization.CultureInfo.InvariantCulture)" data-stock="@item.Stock" @(item.Stock == 0 ? "disabled" : null)>
                     <span class="checkout-sample-top"><span class="checkout-sample-symbol">@item.Name.Substring(0, 1).ToUpperInvariant()</span><span class="checkout-sample-add">+</span></span>
                     <strong>@item.Name</strong><span class="checkout-sample-price">$@item.Price.ToString("F2")</span><span class="checkout-sample-meta">#@item.Code · @item.Stock in stock</span>
                 </button>

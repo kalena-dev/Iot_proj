@@ -25,8 +25,7 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
             // A scanned UPC or EPC selects the product.
             if (!string.IsNullOrWhiteSpace(Code))
             {
-                var scanned = await repository.FindByUpcAsync(Code, cancellationToken)
-                              ?? await repository.FindByEpcAsync(Code, cancellationToken);
+                var scanned = (await repository.ResolveCodeAsync(Code, cancellationToken))?.Product;
                 if (scanned is null)
                 {
                     SetStatus($"No product has the code \"{Code.Trim()}\". Add it as a new product first.", "error");

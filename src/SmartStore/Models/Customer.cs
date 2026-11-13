@@ -31,8 +31,12 @@ public sealed class Customer
     [BsonElement("totalPoints")]
     public int TotalPoints { get; set; }
 
+    [BsonElement("checkoutOnly")]
+    [BsonIgnoreIfDefault]
+    public bool CheckoutOnly { get; set; }
+
     [BsonIgnore]
-    public string FullName => $"{FirstName} {LastName}";
+    public string FullName => CheckoutOnly ? Email : $"{FirstName} {LastName}";
 }
 
 public sealed class CustomerAddress

@@ -10,9 +10,13 @@ public sealed class RfidTests
     private RfidCheckout Create(string mode = "Reader", string key = "abcdefghijklmnopqrstuvwxyz012345") =>
         new(Microsoft.Extensions.Options.Options.Create(new RfidOptions
         {
-            Mode = mode, ApiKey = key,
-            EpcProducts = new() { ["AABB"] = "1001", ["CCDD"] = "1001", ["EEFF"] = "1002" }
+            Mode = mode, ApiKey = key
         }), clock);
+
+    private static Task<string?> Resolve(string epc) => Task.FromResult(epc switch
+    {
+        "AABB" or "CCDD" => "1001", "EEFF" => "1002", _ => null
+    });
 
     [Fact]
     public void AuthenticationFailsClosed()
@@ -24,48 +28,48 @@ public sealed class RfidTests
     }
 
     [Fact]
-    public void MultiplePhysicalTagsMapToQuantitiesAndRetriesAreDeduplicated()
+    public async Task MultiplePhysicalTagsMapToQuantitiesAndRetriesAreDeduplicated()
     {
         var service = Create();
         var session = service.Open();
-        Assert.True(service.Accept(new(session, ["aabb", "AABB", "CCDD", "EEFF"])));
-        Assert.True(service.Accept(new(session, ["AABB"])));
+        Assert.True(await service.AcceptAsync(new(session, ["aabb", "AABB", "CCDD", "EEFF"]), Resolve));
+        Assert.True(await service.AcceptAsync(new(session, ["AABB"]), Resolve));
         var tags = service.Read(session)!;
         Assert.Equal(3, tags.Length);
         Assert.Equal(2, tags.Count(t => t.Code == "1001"));
     }
 
     [Fact]
-    public void InvalidAndUnmappedBatchesAreAtomic()
+    public async Task InvalidAndUnmappedBatchesAreAtomic()
     {
         var service = Create();
         var session = service.Open();
-        Assert.Throws<ArgumentException>(() => service.Accept(new(session, ["AABB", "FFFF"])));
-        Assert.Throws<ArgumentException>(() => service.Accept(new(session, ["AABB", "not-an-epc"])));
-        Assert.Throws<ArgumentException>(() => service.Accept(new(session, new string[101])));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(session, ["AABB", "FFFF"]), Resolve));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(session, ["AABB", "not-an-epc"]), Resolve));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(session, new string[101]), Resolve));
         Assert.Empty(service.Read(session)!);
     }
 
     [Fact]
-    public void SessionsAreIsolatedAndExpire()
+    public async Task SessionsAreIsolatedAndExpire()
     {
         var service = Create();
         var first = service.Open();
         var second = service.Open();
-        service.Accept(new(first, ["AABB"]));
+        await service.AcceptAsync(new(first, ["AABB"]), Resolve);
         Assert.Empty(service.Read(second)!);
-        Assert.False(service.Accept(new("unknown", ["AABB"])));
+        Assert.False(await service.AcceptAsync(new("unknown", ["AABB"]), Resolve));
         clock.Now = clock.Now.AddMinutes(31);
         Assert.Null(service.Read(first));
-        Assert.False(service.Accept(new(first, ["CCDD"])));
+        Assert.False(await service.AcceptAsync(new(first, ["CCDD"]), Resolve));
     }
 
     [Fact]
-    public void SimulationNeverAcceptsReaderEvents()
+    public async Task SimulationNeverAcceptsReaderEvents()
     {
         var service = Create("Simulation");
         Assert.True(service.IsSimulation);
-        Assert.Throws<ArgumentException>(() => service.Accept(new(service.Open(), ["AABB"])));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(service.Open(), ["AABB"]), Resolve));
     }
 
     [Theory]

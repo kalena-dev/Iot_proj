@@ -62,7 +62,7 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
         var options = Microsoft.Extensions.Options.Options.Create(new MongoDbOptions { DatabaseName = Name });
         Products = new MongoProductRepository(_client, options);
         Customers = new MongoCustomerRepository(_client, options);
-        Store = new StoreDemo(_client, options, Products, NullLogger<StoreDemo>.Instance);
+        Store = new StoreDemo(_client, options, Products, Customers, NullLogger<StoreDemo>.Instance);
     }
 
     public string Name { get; }
@@ -91,7 +91,7 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
             if (!hello.TryGetValue("setName", out var setName) || string.IsNullOrWhiteSpace(setName.AsString))
                 throw new InvalidOperationException("Persistence tests require a replica set; a standalone mongod cannot run these transactions.");
 
-            foreach (var collection in new[] { "products", "receptions", "customers", "demo_sales" })
+            foreach (var collection in new[] { "products", "receptions", "customers", "demo_sales", "email_log" })
                 await database._database.CreateCollectionAsync(collection, cancellationToken: database.Token);
             return database;
         }

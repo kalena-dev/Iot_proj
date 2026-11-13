@@ -2,12 +2,12 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using SmartStore.Services;
+using SmartStore.Data;
 
 namespace SmartStore.Pages;
 
-public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailService, IStatusIndicator indicator, ILogger<CheckoutModel> logger, RfidCheckout rfid) : PageModel
+public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailService, IStatusIndicator indicator, ILogger<CheckoutModel> logger, RfidCheckout rfid, IProductRepository products) : PageModel
 {
-    public IReadOnlyDictionary<string, string> EpcProducts => rfid.EpcProducts;
     public bool SimulationMode => rfid.IsSimulation;
     public string RfidSession { get; private set; } = "";
 
@@ -15,7 +15,7 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
     {
         Response.Headers.CacheControl = "no-store";
         if (!rfid.IsReader) return;
-        RfidSession = rfid.Open(Products);
+        RfidSession = rfid.Open();
 
         // Optional single-till Pi demo: publish the local page's pairing to its reader.
         var pairingFile = Environment.GetEnvironmentVariable("RFID_LOCAL_PAIRING_FILE");
@@ -26,6 +26,24 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
             System.IO.File.WriteAllText(temporaryFile, RfidSession);
             System.IO.File.Move(temporaryFile, pairingFile, overwrite: true);
         }
+    }
+
+    public async Task<IActionResult> OnGetCodeAsync(string? code, CancellationToken token)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (string.IsNullOrWhiteSpace(code) || code.Length > 512) return BadRequest();
+        var resolved = await products.ResolveCodeAsync(code, token);
+        return resolved is null ? NotFound() : new JsonResult(new { code = resolved.Value.Product.Upc, isTag = resolved.Value.IsTag });
+    }
+
+    public async Task<IActionResult> OnPostAssignCodeAsync(string? code, string? upc, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(upc)) return BadRequest();
+        try { await products.AssignCodeAsync(code, upc, token); }
+        catch (DuplicateProductCodeException) { return StatusCode(StatusCodes.Status409Conflict); }
+        catch (ArgumentException) { return BadRequest(); }
+        catch (ProductNotFoundException) { return NotFound(); }
+        return await OnGetCodeAsync(code, token);
     }
 
     public IActionResult OnGetRfid()
@@ -86,7 +104,7 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
             if (Cart.Length > 4000) throw new InvalidOperationException("Cart is too large.");
             var items = JsonSerializer.Deserialize<Dictionary<string, int>>(Cart)
                 ?? throw new InvalidOperationException("Add an item first.");
-            sale = await store.CheckoutAsync(items, PaymentResult, CustomerEmail, cancellationToken);
+            sale = await store.CheckoutAsync(items, PaymentResult, CustomerEmail, cancellationToken, emailService.Sender);
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
@@ -119,7 +137,8 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
         var emailSent = false;
         if (sale.EmailStatus == "pending")
         {
-            try { emailSent = await emailService.SendAsync(sale, cancellationToken); }
+            using var sendTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try { emailSent = await emailService.SendAsync(sale, sendTimeout.Token); }
             catch (Exception exception)
             {
                 logger.LogWarning(exception, "Receipt email failed for sale {SaleId}.", sale.Id);
@@ -133,9 +152,10 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
                 logger.LogWarning(exception, "Cannot save receipt email status for sale {SaleId}.", sale.Id);
             }
         }
-        Message = $"Payment approved! Receipt {sale.Id[..8]} — ${sale.Total:F2}. Points: {sale.PointsEarned}. " +
+        Message = $"Payment approved! Receipt {sale.Id[..8]} — ${sale.Total:F2}. " +
             (sale.CustomerEmail is null ? "Guest checkout · no loyalty points earned." :
-                emailSent ? "Receipt emailed." : "Email not sent; receipt is available below.");
+                 $"Earned {sale.PointsEarned} points. Balance: {sale.PointsBalanceAfter}. " +
+                (emailSent ? "Receipt emailed." : "Email not sent; receipt is available below."));
         return RedirectToPage();
     }
 

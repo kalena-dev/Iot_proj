@@ -58,13 +58,19 @@ builder.Services.AddSingleton<IMongoClient>(serviceProvider =>
     return new MongoClient(settings);
 });
 
-builder.Services.AddSingleton<ICustomerRepository, MongoCustomerRepository>();
+builder.Services.AddSingleton<MongoCustomerRepository>();
+builder.Services.AddSingleton<ICustomerRepository>(sp => sp.GetRequiredService<MongoCustomerRepository>());
 builder.Services.AddSingleton<IProductRepository, MongoProductRepository>();
 builder.Services.AddSingleton<IStatusIndicator, RaspberryPiStatusIndicator>();
 builder.Services.AddSingleton<StoreDemo>();
 builder.Services.AddSingleton<ReceiptEmailService>();
 
 var app = builder.Build();
+if (args.Contains("--backfill-checkout"))
+{
+    await app.Services.GetRequiredService<StoreDemo>().BackfillCheckoutRecordsAsync(CancellationToken.None);
+    return;
+}
 
 if (!app.Environment.IsDevelopment())
 {

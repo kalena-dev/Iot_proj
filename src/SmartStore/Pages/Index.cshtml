@@ -218,11 +218,11 @@
                     @foreach (var customer in Model.RecentCustomers)
                     {
                         <li>
-                            <span class="avatar" aria-hidden="true">@customer.FirstName[0]@customer.LastName[0]</span>
+                            <span class="avatar" aria-hidden="true">@(customer.CheckoutOnly ? "@" : string.Concat(customer.FirstName?.FirstOrDefault(), customer.LastName?.FirstOrDefault()))</span>
                             <div>
                                 <strong>@customer.FullName</strong>
-                                <small>@customer.Email</small>
-                                <span>@customer.Address.City, @customer.Address.Province · @customer.CreatedAtUtc.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                                @if (!customer.CheckoutOnly) { <small>@customer.Email · @customer.Address.City, @customer.Address.Province</small> }
+                                <span>@customer.TotalPoints points · @customer.CreatedAtUtc.ToLocalTime().ToString("MMM d, h:mm tt")</span>
                             </div>
                         </li>
                     }

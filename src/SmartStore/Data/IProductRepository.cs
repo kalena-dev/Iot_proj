@@ -6,6 +6,11 @@ namespace SmartStore.Data;
 // Product lookups can join checkout's session. Stock decrements must join its active transaction.
 public interface IProductRepository
 {
+    Task<(Product Product, bool IsTag)?> ResolveCodeAsync(string code, CancellationToken token, IClientSessionHandle? session = null);
+    Task<List<ProductCode>> ListCodesAsync(CancellationToken token);
+    Task AssignCodeAsync(string code, string upc, CancellationToken token);
+    Task BackfillCodesAsync(CancellationToken token);
+
     Task<IReadOnlyList<Product>> GetAllAsync(CancellationToken cancellationToken = default);
 
     Task<Product?> GetByIdAsync(string id, CancellationToken cancellationToken = default);

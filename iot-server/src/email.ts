@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
+import type { OutboundEmailLog } from './outbound-email-log.js';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import type { Alert, Mailer } from './model.js';
@@ -13,7 +14,8 @@ export interface EmailConnectionChecks { smtp: boolean; imap: boolean }
 export class EmailService implements Mailer {
   private readonly transport: Transporter;
   constructor(private readonly config: EmailConfig, transport?: Transporter,
-    private readonly imapFactory: (config: EmailConfig) => ImapFlow = createImapClient) {
+    private readonly imapFactory: (config: EmailConfig) => ImapFlow = createImapClient,
+    private readonly log?: OutboundEmailLog) {
     this.transport = transport ?? nodemailer.createTransport({
       host: config.smtpHost, port: config.smtpPort, secure: config.smtpPort === 465,
       requireTLS: config.smtpPort !== 465,
@@ -41,9 +43,14 @@ export class EmailService implements Mailer {
     const [smtpOk, imapOk] = await Promise.all([smtp(), imap()]);
     return { smtp: smtpOk, imap: imapOk };
   }
+  private async submit(kind: string, message: {from: string; to: string; replyTo: string; subject: string; text: string}, reference?: string) {
+    const submit = () => this.transport.sendMail(message);
+    if (this.log) await this.log.send(kind, message.from, message.to, message.subject, submit, reference);
+    else await submit();
+  }
   async sendSetupTest(recipient: string) {
     if (!this.config.enabled) throw new Error('Email is disabled');
-    await this.transport.sendMail({
+    await this.submit('setup-test', {
       from: this.config.from, to: recipient, replyTo: this.config.imapUser,
       subject: 'Northstar email setup test',
       text: 'The Northstar application successfully submitted this setup test through SMTP.\n\n' +
@@ -55,7 +62,7 @@ export class EmailService implements Mailer {
   }
   async send(alert: Alert) {
     if (!this.config.enabled) throw new Error('Email is disabled');
-    await this.transport.sendMail({
+    await this.submit('temperature-alert', {
       from: this.config.from, to: alert.recipient, replyTo: this.config.imapUser,
       subject: `${alert.fridge} temperature alert [Northstar:${alert._id}]`,
       text: `The current temperature is ${alert.temperature} °C. Would you like to turn on the fan?\n\n` +
@@ -63,7 +70,7 @@ export class EmailService implements Mailer {
         'Reply YES on the first line to turn on the shared store fan. Reply NO (or do not reply) to take no action.\n' +
         `Keep the subject unchanged. This request expires at ${alert.expiresAt}.\n` +
         'The dashboard will show ON only after the Raspberry Pi confirms the output.\n'
-    });
+    }, alert._id);
   }
   async poll(monitor: Monitor) {
     if (!this.config.enabled) { monitor.emailConnected = false; return; }

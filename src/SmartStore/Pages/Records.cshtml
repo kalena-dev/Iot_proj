@@ -1,0 +1,37 @@
+@page
+@model RecordsModel
+@{ ViewData["Title"] = Model.ViewLog == "email" ? "Email log" : "Checkout transactions"; }
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+<section class="panel products-panel">
+<h1>@ViewData["Title"]</h1>
+<p><a asp-page="/Records">Transactions</a> · <a asp-page="/Records" asp-route-viewLog="email">Email log</a></p>
+@if (Model.ViewLog == "email")
+{
+    <div class="table-scroll"><table class="products-table"><thead><tr><th>Created (UTC)</th><th>Sender</th><th>Recipient</th><th>Subject</th><th>Status</th><th>Completed (UTC)</th></tr></thead><tbody>
+    @foreach (var email in Model.Emails)
+    {
+        <tr><td>@email.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td><td>@(email.Sender ?? "—")</td><td>@email.Recipient</td><td>@email.Subject</td>
+            <td>@email.Status</td><td>@(email.CompletedAtUtc?.ToString("yyyy-MM-dd HH:mm") ?? "—")</td></tr>
+    }
+    </tbody></table></div>
+    @if (Model.Emails.Count == 0) { <p>No email records on this page.</p> }
+}
+else
+{
+    <div class="table-scroll"><table class="products-table"><thead><tr><th>Date (UTC)</th><th>Transaction</th><th>Customer</th><th>Payment</th><th>Total</th><th>Points earned</th></tr></thead><tbody>
+    @foreach (var sale in Model.Sales)
+    {
+        <tr><td>@sale.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td><td>
+        @if (sale.PaymentStatus == "approved") { <a asp-page="/Receipt" asp-route-id="@sale.Id">@sale.Id</a> }
+        else { @sale.Id }
+        </td><td>@(sale.CustomerEmail ?? "Guest")</td><td>@sale.PaymentStatus</td><td>$@sale.Total.ToString("F2")</td><td>@sale.PointsEarned</td></tr>
+    }
+    </tbody></table></div>
+    @if (Model.Sales.Count == 0) { <p>No transactions on this page.</p> }
+}
+<nav aria-label="Record pages">
+    @if (Model.PageNumber > 1) { <a asp-route-pageNumber="@(Model.PageNumber - 1)" asp-route-viewLog="@Model.ViewLog">Previous</a> }
+    <span>Page @Model.PageNumber</span>
+    @if (Model.HasNext) { <a asp-route-pageNumber="@(Model.PageNumber + 1)" asp-route-viewLog="@Model.ViewLog">Next</a> }
+</nav>
+</section>

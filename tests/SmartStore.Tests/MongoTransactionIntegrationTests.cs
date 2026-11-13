@@ -86,7 +86,7 @@ public sealed class MongoTransactionIntegrationTests
     }
 
     [MongoReplicaSetFact]
-    public async Task GuestEmailReceivesReceiptWithoutALoyaltyAccount()
+    public async Task FirstCheckoutCreatesAccountAndReturningShopperKeepsPoints()
     {
         await using var db = await MongoTestDatabase.CreateAsync();
         var product = await db.AddProductAsync(stock: 2, price: 2.50m);
@@ -96,10 +96,25 @@ public sealed class MongoTransactionIntegrationTests
         Assert.Equal(sale.Id, stored.Id);
         Assert.Equal("guest@example.test", stored.CustomerEmail);
         Assert.Equal("pending", stored.EmailStatus);
-        Assert.Null(stored.CustomerId);
-        Assert.Equal(0, stored.PointsEarned);
+        Assert.NotNull(stored.CustomerId);
+        Assert.Equal(2, stored.PointsEarned);
+        Assert.Equal(2, stored.PointsBalanceAfter);
+        var log = Assert.Single(await db.Store.ListEmailsAsync(0, 25, db.Token));
+        Assert.Equal(sale.Id, log.Id);
+        Assert.Equal("pending", log.Status);
+        await db.Store.UpdateEmailStatusAsync(sale.Id, "sent", db.Token);
+        log = Assert.Single(await db.Store.ListEmailsAsync(0, 25, db.Token));
+        Assert.Equal("sent", log.Status);
+        Assert.NotNull(log.CompletedAtUtc);
         var declined = await db.Store.CheckoutAsync(cart, "decline", "guest@example.test", db.Token);
         Assert.Equal("not_requested", declined.EmailStatus);
+        var second = await db.Store.CheckoutAsync(cart, "approve", "guest@example.test", db.Token);
+        Assert.Equal(sale.CustomerId, second.CustomerId);
+        Assert.Equal(4, second.PointsBalanceAfter);
+        var customer = Assert.Single(await db.Customers.GetRecentAsync(25, db.Token));
+        Assert.Equal(4, customer.TotalPoints);
+        Assert.True(customer.CheckoutOnly);
+        Assert.Equal(3, (await db.Store.ListTransactionsAsync(0, 25, db.Token)).Count);
     }
 
     [MongoReplicaSetFact]
@@ -356,6 +371,45 @@ public sealed class MongoTransactionIntegrationTests
         Assert.Equal(9.60m, stored.Total);
         Assert.Equal(9, stored.PointsEarned);
         Assert.Equal(4, Assert.Single(stored.Items).Quantity);
+    }
+
+    [MongoReplicaSetFact]
+    public async Task CodesSurviveMigrationEditsAndCheckoutUntilProductDeletion()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var first = await db.AddProductAsync(stock: 3);
+        var other = await db.AddProductAsync(ordinal: 2);
+        await db.Products.AssignCodeAsync(" long scanned/case-017 ", first.Upc, db.Token);
+        await db.Products.AssignCodeAsync("aa00", first.Upc, db.Token);
+        await Assert.ThrowsAsync<DuplicateProductCodeException>(() => db.Products.AssignCodeAsync("AA00", other.Upc, db.Token));
+        var oldEpc = first.Epc;
+        first.Epc = "EE00";
+        await db.Products.UpdateAsync(first, db.Token);
+        Assert.Null(await db.Products.ResolveCodeAsync(oldEpc, db.Token));
+        Assert.Equal(first.Id, (await db.Products.ResolveCodeAsync("aa00", db.Token))?.Product.Id);
+        await db.Store.BackfillCheckoutRecordsAsync(db.Token);
+        await db.Store.BackfillCheckoutRecordsAsync(db.Token);
+        var sale = await db.Store.CheckoutAsync(new() { ["long scanned/case-017"] = 1, ["AA00"] = 1 }, "approve", null, db.Token);
+        Assert.Equal(2, Assert.Single(sale.Items).Quantity);
+        await db.Products.DeleteAsync(first.Id!, db.Token);
+        Assert.Null(await db.Products.ResolveCodeAsync("AA00", db.Token));
+    }
+
+    [MongoReplicaSetFact]
+    public async Task ConcurrentFirstPurchasesShareAccountAndRegistrationPreservesBalance()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var first = await db.AddProductAsync(stock: 1, price: 4.50m);
+        var second = await db.AddProductAsync(stock: 1, ordinal: 2, price: 3m);
+        var sales = await RunTogetherAsync(
+            () => db.Store.CheckoutAsync(new() { [first.Upc] = 1 }, "approve", "customer@example.test", db.Token),
+            () => db.Store.CheckoutAsync(new() { [second.Upc] = 1 }, "approve", "CUSTOMER@example.test", db.Token));
+        Assert.Equal(sales[0].CustomerId, sales[1].CustomerId);
+        await db.AddCustomerAsync();
+        var customer = Assert.Single(await db.Customers.GetRecentAsync(10, db.Token));
+        Assert.Equal(sales[0].CustomerId, customer.Id);
+        Assert.Equal(7, customer.TotalPoints);
+        Assert.False(customer.CheckoutOnly);
     }
 
     private static async Task AssertConcurrentDuplicateAsync(string field)

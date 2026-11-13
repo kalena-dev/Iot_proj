@@ -28,6 +28,7 @@
             </div>
         }
         @if (Model.Sales.Count == 0) { <p>Make a demo purchase to see it here.</p> }
+    <p><a asp-page="/Records">All checkout transactions</a> · <a asp-page="/Records" asp-route-viewLog="email">Email log</a></p>
     <a asp-page="/Checkout">Go to self-checkout →</a>
 </section></aside>
 </div>

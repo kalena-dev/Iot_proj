@@ -22,16 +22,14 @@ if [[ ! -c /dev/ttyUSB0 ]] && lsusb -d 0483:5750 >/dev/null; then
   sudo modprobe usbserial vendor=0x0483 product=0x5750 && udevadm settle
 fi
 if [[ ! -c /dev/ttyUSB0 ]]; then echo 'Waiting for the CF600. Manual checkout is available.'; fi
+"$dotnet" src/SmartStore/bin/Debug/net8.0/SmartStore.dll --backfill-checkout
 for service in smartstore-poc-reader smartstore-poc-web; do
   if systemctl --user is-active --quiet "$service"; then systemctl --user stop "$service"; fi
 done
 : > "$RFID_LOCAL_PAIRING_FILE"
-# The inventory EPC is always available. Pass any extra EPC-to-UPC aliases set by the operator.
-aliases=()
-for variable in ${!Rfid__EpcProducts__@}; do aliases+=("--setenv=$variable"); done
 systemd-run --user --collect --unit=smartstore-poc-web --working-directory="$repo/src/SmartStore" \
   --setenv=MONGODB_ENV_FILE --setenv=MongoDb__DatabaseName --setenv=Rfid__Mode --setenv=Rfid__ApiKey \
-  --setenv=RFID_LOCAL_PAIRING_FILE --setenv=Gpio__Enabled --setenv=Security__UseHttpsRedirection "${aliases[@]}" \
+  --setenv=RFID_LOCAL_PAIRING_FILE --setenv=Gpio__Enabled --setenv=Security__UseHttpsRedirection \
   "$dotnet" bin/Debug/net8.0/SmartStore.dll --urls "$RFID_SERVER_URL"
 systemd-run --user --collect --unit=smartstore-poc-reader --working-directory="$repo" \
   --setenv=RFID_LOCAL_PAIRING_FILE --setenv=RFID_SERVER_URL --setenv=RFID_API_KEY \

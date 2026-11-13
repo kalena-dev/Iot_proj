@@ -6,7 +6,7 @@ using SmartStore.Options;
 
 namespace SmartStore.Data;
 
-public sealed class MongoProductRepository : IProductRepository
+public sealed partial class MongoProductRepository : IProductRepository
 {
     private readonly IMongoClient _client;
     private readonly IMongoCollection<Product> _products;
@@ -19,6 +19,7 @@ public sealed class MongoProductRepository : IProductRepository
         _client = client;
         var settings = options.Value;
         var database = client.GetDatabase(settings.DatabaseName);
+        _codes = database.GetCollection<ProductCode>("product_codes");
         _products = database.GetCollection<Product>(settings.ProductsCollectionName);
         _receptions = database.GetCollection<Reception>(settings.ReceptionsCollectionName);
     }
@@ -63,7 +64,13 @@ public sealed class MongoProductRepository : IProductRepository
 
         try
         {
-            await _products.InsertOneAsync(product, cancellationToken: cancellationToken);
+            product.Id ??= ObjectId.GenerateNewId().ToString();
+            await MongoTransaction.RunAsync(_client, async (session, token) =>
+            {
+                await _products.InsertOneAsync(session, product, cancellationToken: token);
+                await SavePrimaryCodesAsync(session, product, token);
+                return true;
+            }, "Product creation", product.Id, cancellationToken);
         }
         catch (MongoWriteException exception)
             when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -93,9 +100,16 @@ public sealed class MongoProductRepository : IProductRepository
 
         try
         {
-            var result = await _products.UpdateOneAsync(p => p.Id == product.Id, update,
-                cancellationToken: cancellationToken);
-            if (result.MatchedCount == 0) throw new ProductNotFoundException();
+            await MongoTransaction.RunAsync(_client, async (session, token) =>
+            {
+                var old = await _products.FindOneAndUpdateAsync<Product, Product>(session, p => p.Id == product.Id,
+                    update, cancellationToken: token) ?? throw new ProductNotFoundException();
+                var retained = new[] { product.Upc.ToUpperInvariant(), product.Epc };
+                var removed = new[] { old.Upc.ToUpperInvariant(), old.Epc }.Except(retained).ToArray();
+                await _codes.DeleteManyAsync(session, c => c.ProductId == product.Id && removed.Contains(c.Code), cancellationToken: token);
+                await SavePrimaryCodesAsync(session, product, token);
+                return true;
+            }, "Product update", product.Id!, cancellationToken);
         }
         catch (MongoWriteException exception)
             when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -110,6 +124,7 @@ public sealed class MongoProductRepository : IProductRepository
         return await MongoTransaction.RunAsync(_client, async (session, token) =>
         {
             var result = await _products.DeleteOneAsync(session, p => p.Id == id, cancellationToken: token);
+            await _codes.DeleteManyAsync(session, c => c.ProductId == id, cancellationToken: token);
             await _receptions.DeleteManyAsync(session, r => r.ProductId == id, cancellationToken: token);
             return result.DeletedCount == 1;
         }, "Product deletion", id, cancellationToken);

@@ -1,3 +1,5 @@
+import { MongoClient } from 'mongodb';
+import { OutboundEmailLog } from './outbound-email-log.js';
 import { input, password, confirm, select } from '@inquirer/prompts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -107,7 +109,9 @@ async function main() {
     const conflicts = conflictingEmailOverrides(settings, process.env);
     if (conflicts.length) throw new SetupFailure('Unset overriding process environment keys: ' + conflicts.join(', '));
     const { config } = emailConfigFromValues(settings);
-    const service = new EmailService(config);
+    if (!values.MONGODB_URI) throw new SetupFailure('Set MONGODB_URI to save the setup test in the email log.');
+    const mongo = new MongoClient(values.MONGODB_URI, { serverSelectionTimeoutMS: 8000 });
+    const service = new EmailService(config, undefined, undefined, new OutboundEmailLog(mongo.db(values.MONGODB_DATABASE || 'smart_store')));
     const errors: EmailDiagnostic[] = [];
     let submitted = false;
     let stage: EmailStage = 'smtp-sign-in';
@@ -125,7 +129,7 @@ async function main() {
       const diagnostic = diagnoseEmailError(stage, error);
       errors.push(diagnostic);
       console.error(formatEmailDiagnostic(diagnostic));
-    } finally { service.close(); }
+    } finally { service.close(); await mongo.close(); }
     if (submitted) break;
     await recordDiagnostics(errors);
     console.log('Settings were NOT changed. You can retry without re-entering everything.');

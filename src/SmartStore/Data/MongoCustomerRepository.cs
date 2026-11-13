@@ -20,6 +20,13 @@ public sealed class MongoCustomerRepository : ICustomerRepository
 
     public async Task AddAsync(Customer customer, CancellationToken cancellationToken = default)
     {
+        var profile = Builders<Customer>.Update.Set(c => c.FirstName, customer.FirstName)
+            .Set(c => c.LastName, customer.LastName).Set(c => c.Phone, customer.Phone)
+            .Set(c => c.Address, customer.Address).Unset(c => c.CheckoutOnly);
+        var completed = await _customers.UpdateOneAsync(c => c.Email == customer.Email && c.CheckoutOnly,
+            profile, cancellationToken: cancellationToken);
+        if (completed.MatchedCount == 1) return;
+
         // Also catch existing accounts saved before email normalization was added.
         // The unique index below remains the final guard against simultaneous inserts.
         var existing = await _customers.Find(
@@ -55,7 +62,7 @@ public sealed class MongoCustomerRepository : ICustomerRepository
             .ToListAsync(cancellationToken);
     }
 
-    private async Task EnsureIndexesAsync(CancellationToken cancellationToken)
+    public async Task EnsureIndexesAsync(CancellationToken cancellationToken)
     {
         if (_indexesReady)
         {

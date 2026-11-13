@@ -57,7 +57,7 @@
                         <tr>
                             <th scope="col">Product</th>
                             <th scope="col">Category</th>
-                            <th scope="col">UPC / EPC</th>
+                            <th scope="col">Product codes</th>
                             <th scope="col" class="num">Price</th>
                             <th scope="col" class="num">In stock</th>
                             <th scope="col"><span class="visually-hidden">Actions</span></th>
@@ -82,7 +82,12 @@
                                     </div>
                                 </td>
                                 <td>@product.Category</td>
-                                <td><code>@product.Upc</code><br /><code class="epc">@product.Epc</code></td>
+                                <td><code>@product.Upc</code><br /><code class="epc">@product.Epc</code>
+                                    @foreach (var alias in Model.Codes[product.Id!].Except(new[] { product.Upc, product.Epc }, StringComparer.OrdinalIgnoreCase))
+                                    {
+                                        <br /><code>@alias</code>
+                                    }
+                                </td>
                                 <td class="num">@product.Price.ToString("C", System.Globalization.CultureInfo.GetCultureInfo("en-CA"))</td>
                                 <td class="num"><span class="stock @stockClass">@product.QuantityInStock</span></td>
                                 <td class="row-actions">

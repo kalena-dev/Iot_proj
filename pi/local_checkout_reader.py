@@ -15,6 +15,7 @@ def main():
     key = os.environ['RFID_API_KEY']
     active = None
     seen = set()
+    retry_after = {}
     while True:
         try:
             for batch in inventory(DEFAULT_SDK, '/dev/ttyUSB0', include_repeats=True):
@@ -22,8 +23,9 @@ def main():
                 if session != active:
                     active = session
                     seen.clear()
+                    retry_after.clear()
                 epc = batch[0]
-                if not session or epc in seen:
+                if not session or epc in seen or time.monotonic() < retry_after.get(epc, 0):
                     continue
                 try:
                     send(batch, url, key, session)
@@ -31,6 +33,9 @@ def main():
                     if error.code not in (400, 404):
                         raise
                     print(f'Checkout rejected a tag (HTTP {error.code}). Check the mapping or reload checkout.', file=sys.stderr)
+                    retry_after[epc] = time.monotonic() + 5
+                    continue
+                retry_after.pop(epc, None)
                 seen.add(epc)
         except (OSError, ValueError) as error:
             print(f'Retrying local reader in two seconds: {error}', file=sys.stderr)

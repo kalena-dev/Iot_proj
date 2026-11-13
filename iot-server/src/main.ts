@@ -3,6 +3,7 @@ import express from 'express';
 import mqtt from 'mqtt';
 import { MongoClient } from 'mongodb';
 import { z } from 'zod';
+import { OutboundEmailLog } from './outbound-email-log.js';
 import { EmailService } from './email.js';
 import { Monitor } from './monitor.js';
 import { MongoRepository } from './repository.js';
@@ -42,7 +43,7 @@ const mongo = new MongoClient(config.MONGODB_URI, { serverSelectionTimeoutMS: 80
 const mailer = new EmailService({ enabled: config.EMAIL_ENABLED === 'true',
   smtpHost: config.SMTP_HOST, smtpPort: config.SMTP_PORT, smtpUser: config.SMTP_USER,
   smtpPassword: config.SMTP_PASSWORD, from: config.SMTP_FROM, imapHost: config.IMAP_HOST,
-  imapPort: config.IMAP_PORT, imapUser: config.IMAP_USER, imapPassword: config.IMAP_PASSWORD });
+  imapPort: config.IMAP_PORT, imapUser: config.IMAP_USER, imapPassword: config.IMAP_PASSWORD }, undefined, undefined, new OutboundEmailLog(mongo.db(config.MONGODB_DATABASE)));
 const broker = mqtt.connect(config.MQTT_URL, {
   clientId: 'northstar-iot-server', username: config.MQTT_USER || undefined,
   password: config.MQTT_PASSWORD || undefined, reconnectPeriod: 2000, clean: true,

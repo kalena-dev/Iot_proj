@@ -6,7 +6,6 @@
       el.dataset.code,
       {
         name: el.dataset.name,
-        epc: el.dataset.epc,
         price: Number(el.dataset.price),
         stock: Number(el.dataset.stock)
       }
@@ -16,12 +15,7 @@
   const cart = {};
 
   const codeInput = document.querySelector('#item-code');
-  const mappedTags = new Map(Object.entries(JSON.parse(codeInput.dataset.epcProducts || '{}'))
-    .map(([epc, code]) => [epc.trim().toUpperCase(), code]));
-  for (const [code, product] of products) {
-    if (product.epc) mappedTags.set(product.epc.trim().toUpperCase(), code);
-  }
-  const manualBarcodes = new Map();
+  let scanPending = false;
   const matchLabel = document.querySelector('#barcode-match');
   const matchSelect = document.querySelector('#barcode-product');
   const error = document.querySelector('#scan-error');
@@ -137,35 +131,46 @@
     matchSelect.value = '';
   }
 
-  function addManual() {
+  async function addManual() {
     const barcode = codeInput.value.trim();
+    if (scanPending) return;
     if (!barcode) {
       error.textContent = 'Scan or enter a code.';
       return;
     }
-
-    const epc = barcode.toUpperCase();
-    if (products.has(barcode)) {
-      add(barcode);
-    } else if (products.has(mappedTags.get(epc))) {
-      if (scannedTags.has(epc)) {
+    scanPending = true;
+    try {
+      const assigning = !matchLabel.hidden && Boolean(matchSelect.value);
+      const response = assigning
+        ? await fetch('?handler=AssignCode', { method: 'POST', body: new URLSearchParams({
+            code: barcode, upc: matchSelect.value,
+            __RequestVerificationToken: document.querySelector('[name="__RequestVerificationToken"]').value
+          }) })
+        : await fetch('?handler=Code&code=' + encodeURIComponent(barcode), { cache: 'no-store' });
+      if (codeInput.value.trim() !== barcode) return;
+      if (!assigning && response.status === 404) {
+        matchLabel.hidden = false;
+        error.textContent = 'Choose a product for this code, then select Add item to save it.';
+        matchSelect.focus();
+        return;
+      }
+      if (response.status === 409) throw new Error('This code already belongs to another product. Scan it again.');
+      if (!response.ok) throw new Error('Could not verify this code with inventory.');
+      const {code, isTag} = await response.json();
+      const epc = barcode.toUpperCase();
+      if (isTag && scannedTags.has(epc)) {
         error.textContent = 'This tag has already been scanned.';
         return;
       }
-      const code = mappedTags.get(epc);
-      if (add(code)) scannedTags.set(epc, code);
-    } else if (manualBarcodes.has(barcode)) {
-      add(manualBarcodes.get(barcode));
-    } else if (!matchLabel.hidden && matchSelect.value) {
-      const code = matchSelect.value;
-      if (add(code)) manualBarcodes.set(barcode, code);
-    } else {
-      matchLabel.hidden = false;
-      error.textContent = 'Choose a product for this barcode, then select Add item.';
-      matchSelect.focus();
-      return;
+      if (add(code)) {
+        if (isTag) scannedTags.set(epc, code);
+        resetMatch();
+      }
+    } catch (failure) {
+      error.textContent = failure.message;
+    } finally {
+      scanPending = false;
     }
-    if (!codeInput.value) resetMatch();
   }
 
   codeInput.addEventListener('input', () => {
@@ -177,7 +182,7 @@
   codeInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      addManual();
+      return addManual();
     }
   });
 

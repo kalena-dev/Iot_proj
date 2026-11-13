@@ -40,14 +40,9 @@ The app resolves product codes and deduplicates across inventory cycles.
    take several minutes without tags. It prints only the first 12 bytes of an
    EPC. For longer tags use `cf600_reader.py` as described below.
 
-2. On the SmartStore host, set Reader mode, a private key, and a product
-   mapping for each physical tag in range. Step 1 below shows the server
-   command. For example, this shell-only mapping assigns a tag observed on
-   the Pi to UPC 1001, if that UPC exists in the inventory:
-
-   ```sh
-   export Rfid__EpcProducts__E2801191A503006599BFCCFD=1001
-   ```
+2. Set Reader mode and a private bridge key on the SmartStore host. In checkout,
+   type each unrecognized tag and select its product once to save its association
+   in MongoDB. Product registration also saves the primary EPC and UPC.
 
 3. Open `/Checkout` and keep that page open. On the Pi set the three bridge
    environment variables as in step 4 below. For checkout running on the Pi
@@ -90,7 +85,6 @@ cd /Users/macbook/Documents/GitHub/Iot_proj
 git branch --show-current
 export Rfid__Mode=Reader
 export Rfid__ApiKey="$(openssl rand -hex 32)"
-export Rfid__EpcProducts__E2801191A503006599BFD15D=1001
 export Gpio__Enabled=false
 export Security__UseHttpsRedirection=false
 export ASPNETCORE_ENVIRONMENT=Development
@@ -102,9 +96,7 @@ Keep this terminal running. The existing private `.env` MongoDB settings are loa
 by `DotEnvLoader`; retain your working `MONGODB_URI`. Do not replace it or paste it
 into chat. GPIO is disabled on the Mac; this does not remotely drive the Pi LEDs.
 
-Use an existing UPC from **Products** as the value of any optional EPC alias.
-Registered product EPCs take precedence. Reopen checkout after changing inventory
-or restarting the app.
+Code assignments are shared across tills in the Atlas `product_codes` collection.
 
 ### 2. MacBook terminal B: copy the reader files to the Pi if needed
 

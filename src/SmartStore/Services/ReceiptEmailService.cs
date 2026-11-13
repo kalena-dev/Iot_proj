@@ -6,6 +6,8 @@ namespace SmartStore.Services;
 
 public sealed class ReceiptEmailService(IConfiguration config, ILogger<ReceiptEmailService> logger)
 {
+    public string? Sender => config["SMTP_FROM"];
+
     public string FormatReceipt(DemoSale sale)
     {
         var text = new StringBuilder();
@@ -19,6 +21,7 @@ public sealed class ReceiptEmailService(IConfiguration config, ILogger<ReceiptEm
         text.AppendLine(new string('-', 40));
         text.AppendLine($"TOTAL: ${sale.Total:F2} CAD");
         text.AppendLine($"Loyalty points earned: {sale.PointsEarned}");
+        if (sale.PointsBalanceAfter is int balance) text.AppendLine($"Loyalty balance after purchase: {balance}");
         return text.ToString();
     }
 
@@ -40,8 +43,7 @@ public sealed class ReceiptEmailService(IConfiguration config, ILogger<ReceiptEm
             };
             using var message = new MailMessage(from!, sale.CustomerEmail,
                 $"Smart Store receipt {sale.Id[..8]}", FormatReceipt(sale));
-            // SmtpClient has no cancellation-aware send overload.
-            await client.SendMailAsync(message).WaitAsync(cancellationToken);
+            await client.SendMailAsync(message, cancellationToken);
             return true;
         }
         catch (Exception exception)

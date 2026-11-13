@@ -5,7 +5,7 @@ The application uses SMTP for alerts and IMAP for YES/NO replies. **Gmail is the
 ## Checkout receipts on the Pi
 
 Guests can enter any valid email address at checkout. The app sends a receipt
-after an approved payment. Matching registered accounts also earn loyalty points.
+after an approved payment. Approved checkouts with an email create or reuse a customer account and credit one point per whole dollar.
 Replies go to the configured sender mailbox. The IoT service processes only
 its existing temperature-alert replies from its configured approval address.
 
@@ -80,3 +80,17 @@ The dashboard shows **reply-mailbox connectivity**, not proof that every outgoin
 - After wiring is verified, start the real controller and test YES using a fresh real alert. Reply from the exact alert-recipient address, keep the subject/token and put **YES** alone on the first line. NO never starts the fan; use dashboard OFF or the safety timeout to stop an already-running fan.
 
 See [PHASE2.md](PHASE2.md) for wiring, safety and service installation. Do not mistake the isolated simulated integration test for proof of a wired motor or external email delivery.
+
+
+## Checkout records in MongoDB
+
+Management links to all transactions and the email log. The `transactions` view
+reads the existing `demo_sales` collection. Each approved purchase with a receipt
+email creates or credits a customer in `customers`. The balance increases by one
+point per whole dollar. Receipt, temperature-alert and setup email attempts are
+tracked in `email_log`. Sent means the SMTP server accepted the message.
+
+Run `dotnet run --project src/SmartStore -- --backfill-checkout` with the store's
+MongoDB configuration to link earlier guest receipts, recover known mail outcomes
+and populate `product_codes` from existing inventory. It can be rerun. The Pi
+checkout launcher runs this step automatically.

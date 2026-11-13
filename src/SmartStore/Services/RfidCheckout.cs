@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using SmartStore.Data;
 using Microsoft.Extensions.Options;
 
 namespace SmartStore.Services;
@@ -8,7 +9,6 @@ public sealed class RfidOptions
 {
     public string Mode { get; set; } = "Simulation";
     public string ApiKey { get; set; } = "";
-    public Dictionary<string, string> EpcProducts { get; set; } = new();
 }
 
 public sealed record RfidTag(string Epc, string Code);
@@ -17,11 +17,10 @@ public sealed record RfidBatch(string? Session, string[]? Epcs);
 // One process, one checkout session per page. No native reader SDK dependencies.
 public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clock)
 {
-    private sealed record Session(DateTimeOffset Expires, Dictionary<string, RfidTag> Tags, Dictionary<string, string> Products);
+    private sealed record Session(DateTimeOffset Expires, Dictionary<string, RfidTag> Tags);
     private readonly Dictionary<string, Session> sessions = new();
     private readonly object gate = new();
     public bool IsSimulation => options.Value.Mode == "Simulation";
-    public IReadOnlyDictionary<string, string> EpcProducts => options.Value.EpcProducts;
     public bool IsReader => options.Value.Mode == "Reader";
 
     public bool Authenticate(string key)
@@ -32,7 +31,7 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
                 SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
     }
 
-    public string Open(IReadOnlyList<DemoProduct>? products = null)
+    public string Open()
     {
         lock (gate)
         {
@@ -40,12 +39,7 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
                 sessions.Remove(key);
             if (sessions.Count >= 100) throw new InvalidOperationException("RFID session capacity reached. Try again later.");
             var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-            var mappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (epc, code) in EpcProducts)
-                if (products is null || products.Any(p => p.Code == code)) mappings[epc.Trim()] = code;
-            if (products is not null)
-                foreach (var product in products) mappings[product.Epc.Trim()] = product.Code;
-            sessions[token] = new(clock.GetUtcNow().AddMinutes(30), new(StringComparer.Ordinal), mappings);
+            sessions[token] = new(clock.GetUtcNow().AddMinutes(30), new(StringComparer.Ordinal));
             return token;
         }
     }
@@ -57,18 +51,22 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
                 ? session.Tags.Values.ToArray() : null;
     }
 
-    public bool Accept(RfidBatch batch)
+    public async Task<bool> AcceptAsync(RfidBatch batch, Func<string, Task<string?>> resolve)
     {
         if (!IsReader || batch.Session is null || batch.Epcs is not { Length: >= 1 and <= 100 })
             throw new ArgumentException("Supply a session and between 1 and 100 EPCs.");
         // Validate the whole batch before changing session state.
         var epcs = batch.Epcs.Select(Normalize).Distinct().ToArray();
+        if (Read(batch.Session) is null) return false;
+        var mapped = new List<RfidTag>();
+        foreach (var epc in epcs)
+        {
+            var code = await resolve(epc) ?? throw new ArgumentException("An EPC has no stored product mapping.");
+            mapped.Add(new(epc, code));
+        }
         lock (gate)
         {
             if (!sessions.TryGetValue(batch.Session, out var session) || session.Expires <= clock.GetUtcNow()) return false;
-            var mapped = epcs.Select(epc => new RfidTag(epc,
-                session.Products.GetValueOrDefault(epc)
-                    ?? throw new ArgumentException("An EPC has no configured product mapping."))).ToArray();
             if (session.Tags.Keys.Union(epcs).Count() > 100)
                 throw new ArgumentException("Session tag limit reached.");
             foreach (var tag in mapped) session.Tags.TryAdd(tag.Epc, tag);
@@ -108,7 +106,11 @@ public static class RfidEndpoints
                 var batch = System.Text.Json.JsonSerializer.Deserialize<RfidBatch>(buffer.ToArray(),
                     new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
                 if (batch is null) return Results.BadRequest();
-                return rfid.Accept(batch) ? Results.Ok(new { accepted = true }) : Results.NotFound();
+                return await rfid.AcceptAsync(batch, async epc =>
+                {
+                    var repo = context.RequestServices.GetRequiredService<IProductRepository>();
+                    return (await repo.ResolveCodeAsync(epc, context.RequestAborted))?.Product.Upc;
+                }) ? Results.Ok(new { accepted = true }) : Results.NotFound();
             }
             catch (Exception ex) when (ex is ArgumentException or System.Text.Json.JsonException)
             {
