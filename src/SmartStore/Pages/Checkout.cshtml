@@ -28,13 +28,21 @@
             <h2>Scan your products</h2>
         </div>
 
-        <div class="rfid-scanner">
+        <div class="rfid-scanner" data-mode="@(Model.SimulationMode ? "simulation" : "reader")" data-session="@Model.RfidSession">
             <h3>RFID Self-Checkout Scanner</h3>
             <p>Place all your products near the RFID reader to scan them simultaneously.</p>
 
-            <button type="button" class="primary-button" id="rfid-scan">
-                Simulate RFID Scan
-            </button>
+            @if (Model.SimulationMode)
+            {
+                <button type="button" class="primary-button" id="rfid-scan">Simulate RFID Scan</button>
+                <p>Simulation mode: uses sample tags only.</p>
+            }
+            else
+            {
+                <p>Reader mode: waiting for events from the paired Pi bridge. Hold a tag near the reader to add its mapped product.</p>
+                <label for="rfid-session">Pair this checkout with the Pi (valid for 30 minutes)</label>
+                <input id="rfid-session" value="@Model.RfidSession" readonly />
+            }
 
             <p id="rfid-status" role="status">
                 Scanner ready. Waiting for products...

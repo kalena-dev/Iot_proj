@@ -70,14 +70,7 @@
           delete cart[code];
         }
 
-        // If this item came from RFID, release one associated EPC.
-        for (const [epc, tagCode] of scannedTags) {
-          if (tagCode === code) {
-            scannedTags.delete(epc);
-            break;
-          }
-        }
-
+        // Keep seen EPCs suppressed after removal until a new checkout session.
         error.textContent = '';
         render();
       });
@@ -213,11 +206,32 @@
   }
 
  
-  rfidButton.addEventListener('click', () => {
+  rfidButton?.addEventListener('click', () => {
     rfidStatus.textContent = 'Scanning RFID tags...';
 
     processRfidScan(demoRfidTags);
   });
+
+  const scanner = document.querySelector('.rfid-scanner');
+  async function pollReader() {
+    try {
+      const url = new URL(window.location.href);
+      url.search = new URLSearchParams({ handler: 'Rfid' });
+      const response = await fetch(url, { cache: 'no-store', headers: { 'X-Rfid-Session': scanner.dataset.session } });
+      if (response.status === 404) {
+        rfidStatus.textContent = 'RFID session expired. Reload and pair the Pi again.';
+        return;
+      }
+      if (!response.ok) throw new Error('Reader bridge unavailable');
+      const tags = await response.json();
+      if (tags.length) processRfidScan(tags);
+      else rfidStatus.textContent = 'Waiting for RFID events. No tags received.';
+    } catch {
+      rfidStatus.textContent = 'RFID bridge unavailable. Manual checkout is still available.';
+    }
+    window.setTimeout(pollReader, 1500);
+  }
+  if (scanner.dataset.mode === 'reader' && scanner.dataset.session) pollReader();
 
   render();
 })();

@@ -11,6 +11,14 @@ DotEnvLoader.Load();
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorPages();
+builder.Services.AddOptions<RfidOptions>()
+    .Bind(builder.Configuration.GetSection("Rfid"))
+    .Validate(o => o.Mode is "Simulation" or "Reader", "Rfid:Mode must be Simulation or Reader.")
+    .Validate(o => o.Mode != "Reader" || o.ApiKey.Length >= 32,
+        "Reader mode requires Rfid:ApiKey with at least 32 characters.")
+    .ValidateOnStart();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<RfidCheckout>();
 builder.Services.AddHttpClient<IotServiceClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Iot:BaseUrl"] ?? "http://127.0.0.1:3100/");
@@ -71,6 +79,7 @@ app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthorization();
 app.MapRazorPages();
+app.MapRfid();
 
 app.MapGet("/health", async (
     IMongoClient mongoClient,

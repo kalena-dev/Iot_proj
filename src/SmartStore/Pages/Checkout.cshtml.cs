@@ -5,8 +5,24 @@ using SmartStore.Services;
 
 namespace SmartStore.Pages;
 
-public sealed class CheckoutModel(StoreDemo store, IStatusIndicator indicator, ILogger<CheckoutModel> logger) : PageModel
+public sealed class CheckoutModel(StoreDemo store, IStatusIndicator indicator, ILogger<CheckoutModel> logger, RfidCheckout rfid) : PageModel
 {
+    public bool SimulationMode => rfid.IsSimulation;
+    public string RfidSession { get; private set; } = "";
+
+    public void OnGet()
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (rfid.IsReader) RfidSession = rfid.Open();
+    }
+
+    public IActionResult OnGetRfid()
+    {
+        Response.Headers.CacheControl = "no-store";
+        var tags = rfid.Read(Request.Headers["X-Rfid-Session"].ToString());
+        return tags is null ? NotFound() : new JsonResult(tags);
+    }
+
     public IReadOnlyList<DemoProduct> Products => store.Products;
     [BindProperty] public string Cart { get; set; } = "{}";
     [BindProperty] public string PaymentResult { get; set; } = "approve";
