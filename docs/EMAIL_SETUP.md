@@ -2,6 +2,26 @@
 
 The application uses SMTP for alerts and IMAP for YES/NO replies. **Gmail is the guided default**; the normal `.env` settings still support other providers that permit SMTP/IMAP password authentication.
 
+## Checkout receipts on the Pi
+
+Guests can enter any valid email address at checkout. The app sends a receipt
+after an approved payment. Matching registered accounts also earn loyalty points.
+Replies go to the configured sender mailbox. The IoT service processes only
+its existing temperature-alert replies from its configured approval address.
+
+With 2-Step Verification enabled for the sending mailbox, generate a Google app
+password and run the following in a local terminal from the repository root:
+
+```sh
+python3 pi/setup-checkout-gmail.py your-sender@gmail.com
+systemctl --user restart smartstore-poc-web.service
+```
+
+The setup checks Gmail SMTP on port 587 with STARTTLS and opens the IMAP inbox
+read-only on port 993. It saves the verified settings in the private project
+`.env` and preserves other configuration. If using the alert wizard below with
+the same credentials file, select port 587 for compatibility with checkout.
+
 ## What you must do once
 
 1. Choose a Gmail application mailbox (a dedicated account is recommended). Sign in yourself, enable **2-Step Verification**, then create an app password at **https://myaccount.google.com/apppasswords**. Name it something like `Northstar`. Google login, account creation and two-factor approvals cannot be automated by this application. If App passwords is unavailable, check account restrictions; a school/work administrator may prohibit it.

@@ -2,7 +2,7 @@
 @model SmartStore.Pages.PurchaseHistoryModel
 @{ ViewData["Title"] = "Purchase history"; }
 <h1>Purchase history</h1>
-<p>Classroom demo only: enter a registered email to find transactions. This page does not authenticate customers and must be protected before production use.</p>
+<p>Classroom demo only: enter the email used at checkout to find transactions. This page does not authenticate customers and must be protected before production use.</p>
 <form method="get"><label for="Email">Customer email</label>
 <input id="Email" name="Email" type="email" value="@Model.Email" required />
 <button type="submit">Search</button></form>

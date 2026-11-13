@@ -40,9 +40,9 @@
             <div class="checkout-total"><span>Order total</span><strong id="cart-total">$0.00</strong></div>
             <form method="post" id="checkout-form" class="checkout-form">
                 <input type="hidden" asp-for="Cart" />
-                <label for="CustomerEmail">Registered customer email <span>(optional · required for points)</span></label>
-                <input asp-for="CustomerEmail" type="email" maxlength="254" placeholder="Enter registered email to earn points" />
-                <p class="checkout-points-note">Points require a registered customer email. Guest checkout earns 0 points.</p>
+                <label for="CustomerEmail">Email for receipt <span>(optional)</span></label>
+                <input asp-for="CustomerEmail" type="email" maxlength="254" placeholder="Enter your email address" />
+                <p class="checkout-points-note">Anyone can receive a receipt. Registered customers also earn loyalty points.</p>
                 <label for="PaymentResult">Simulated payment</label>
                 <select asp-for="PaymentResult"><option value="approve">Approve payment</option><option value="decline">Decline payment</option></select>
                 <button type="submit" class="primary-button checkout-submit" id="checkout-button" disabled>Complete checkout</button>

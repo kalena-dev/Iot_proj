@@ -339,7 +339,7 @@
     form.className = 'checkout-history-form';
     const input = document.createElement('input');
     input.type = 'email'; input.required = true; input.maxLength = 254;
-    input.placeholder = 'Registered customer email';
+    input.placeholder = 'Email used at checkout';
     input.value = document.getElementById('CustomerEmail')?.value || '';
     const search = document.createElement('button');
     search.type = 'submit'; search.className = 'checkout-small-button'; search.textContent = 'Search';

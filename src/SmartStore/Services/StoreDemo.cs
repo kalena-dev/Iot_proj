@@ -108,8 +108,6 @@ public sealed class StoreDemo
                     customer = await _customers.Find(session, c => c.Email == normalizedEmail,
                             new FindOptions { Collation = new Collation("en", strength: CollationStrength.Secondary) })
                         .FirstOrDefaultAsync(token);
-                    if (customer is null)
-                        throw new InvalidOperationException("Customer not found. Register the email first or leave it blank for guest checkout.");
                 }
                 var total = lines.Sum(x => x.Price * x.Quantity);
                 var approved = paymentResult == "approve";
@@ -117,9 +115,9 @@ public sealed class StoreDemo
                 {
                     Id = saleId, CreatedAtUtc = createdAtUtc,
                     Items = lines, Total = total, PaymentStatus = approved ? "approved" : "declined",
-                    CustomerId = customer?.Id, CustomerEmail = customer?.Email.Trim().ToLowerInvariant(),
+                    CustomerId = customer?.Id, CustomerEmail = normalizedEmail,
                     PointsEarned = approved && customer is not null ? checked((int)decimal.Floor(total)) : 0,
-                    EmailStatus = approved && customer is not null ? "pending" : "not_requested"
+                    EmailStatus = approved && normalizedEmail is not null ? "pending" : "not_requested"
                 };
                 if (approved)
                 {

@@ -86,6 +86,23 @@ public sealed class MongoTransactionIntegrationTests
     }
 
     [MongoReplicaSetFact]
+    public async Task GuestEmailReceivesReceiptWithoutALoyaltyAccount()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var product = await db.AddProductAsync(stock: 2, price: 2.50m);
+        var cart = new Dictionary<string, int> { [product.Upc] = 1 };
+        var sale = await db.Store.CheckoutAsync(cart, "approve", " Guest@Example.test ", db.Token);
+        var stored = Assert.Single(await db.ReadSalesAsync());
+        Assert.Equal(sale.Id, stored.Id);
+        Assert.Equal("guest@example.test", stored.CustomerEmail);
+        Assert.Equal("pending", stored.EmailStatus);
+        Assert.Null(stored.CustomerId);
+        Assert.Equal(0, stored.PointsEarned);
+        var declined = await db.Store.CheckoutAsync(cart, "decline", "guest@example.test", db.Token);
+        Assert.Equal("not_requested", declined.EmailStatus);
+    }
+
+    [MongoReplicaSetFact]
     public async Task DeclinedCheckoutRecordsAttemptWithoutChangingStockOrLoyalty()
     {
         await using var db = await MongoTestDatabase.CreateAsync();
