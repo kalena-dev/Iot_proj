@@ -1135,14 +1135,128 @@ select:focus-visible {
 .checkout-rfid { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
 .checkout-rfid span { color:var(--muted); font-size:.73rem; }
 
+.sensor-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 18px;
+}
+
+.sensor-heading h2, .sensor-card h3 {
+  margin: 0;
+}
+
+.sensor-status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.sensor-status-line::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.sensor-status-line[data-state="live"]::before {
+  background: #16805f;
+}
+
 .sensor-widgets {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 175px), 1fr));
   gap: 14px;
 }
 
+.sensor-card {
+  --sensor-accent: #96381c;
+  --sensor-tint: #fff1e9;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(160deg, var(--sensor-tint), var(--panel) 68%);
+}
+
+.sensor-card--humidity {
+  --sensor-accent: #265e9f;
+  --sensor-tint: var(--blue-soft);
+}
+
+.sensor-card--illuminance {
+  --sensor-accent: #85540f;
+  --sensor-tint: #fff6df;
+}
+
+.sensor-card--motion {
+  --sensor-accent: #17664e;
+  --sensor-tint: var(--mint-soft);
+}
+
+.sensor-card[data-state="active"] {
+  border-color: var(--sensor-accent);
+}
+
+.sensor-card__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  margin-bottom: 12px;
+  border-radius: 11px;
+  background: var(--sensor-tint);
+  color: var(--sensor-accent);
+}
+
+.sensor-card__icon svg {
+  width: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sensor-card h3 {
+  font-size: 0.88rem;
+}
+
 .sensor-value {
-  margin: 12px 0 0;
-  font-size: 1.35rem;
+  margin: 7px 0 6px;
+  color: var(--navy);
+  font-size: clamp(1.3rem, 2.4vw, 1.9rem);
+  font-variant-numeric: tabular-nums;
   font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.sensor-card--motion .sensor-value {
+  font-size: 1.3rem;
+}
+
+.sensor-card__meta, .sensor-footer {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.sensor-card__meta {
+  margin: 0;
+}
+
+.sensor-card[data-state="stale"] .sensor-card__meta {
+  color: #85540f;
+}
+
+.sensor-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 16px;
 }
