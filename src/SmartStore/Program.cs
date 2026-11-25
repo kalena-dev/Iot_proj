@@ -11,6 +11,7 @@ DotEnvLoader.Load();
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorPages();
+builder.Services.AddHttpClient("Msp01", client => client.Timeout = TimeSpan.FromSeconds(4));
 builder.Services.AddOptions<RfidOptions>()
     .Bind(builder.Configuration.GetSection("Rfid"))
     .Validate(o => o.Mode is "Simulation" or "Reader", "Rfid:Mode must be Simulation or Reader.")

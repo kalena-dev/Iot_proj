@@ -1,0 +1,42 @@
+@page
+@model SensorModel
+@{
+    ViewData["Title"] = "Sensor";
+    var widgets = new (string Key, string Title)[]
+    {
+        ("temperature", "Temperature"),
+        ("humidity", "Humidity"),
+        ("illuminance", "Light intensity"),
+        ("motion", "Motion detection")
+    };
+}
+
+<section class="hero">
+    <div class="hero__copy">
+        <h1>Minew MSP01 sensor</h1>
+        <p>Temperature, humidity, light intensity, and passive infrared motion detection.</p>
+    </div>
+</section>
+
+<section class="panel form-panel" aria-labelledby="sensor-readings-heading" data-sensor-url="@Url.Page("/Sensor", "Readings")">
+    <div class="panel__heading">
+        <h2 id="sensor-readings-heading">Latest readings</h2>
+    </div>
+    <div class="sensor-widgets">
+        @foreach (var widget in widgets)
+        {
+            <section class="panel status-panel" aria-labelledby="sensor-@widget.Key">
+                <div class="panel__heading">
+                    <h3 id="sensor-@widget.Key">@widget.Title</h3>
+                </div>
+                <p class="sensor-value" data-reading="@widget.Key">No reading</p>
+            </section>
+        }
+    </div>
+    <p id="sensor-status" role="status">Waiting for Minew MSP01 readings.</p>
+    <noscript><p>Enable JavaScript to refresh sensor readings.</p></noscript>
+</section>
+
+@section Scripts {
+    <script src="~/js/sensor.js" asp-append-version="true"></script>
+}
