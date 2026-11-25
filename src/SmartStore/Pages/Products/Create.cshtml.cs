@@ -34,7 +34,7 @@ public sealed class CreateModel(IProductRepository repository, ILogger<CreateMod
         }
         catch (DuplicateProductCodeException exception)
         {
-            ModelState.AddModelError(exception.Field == "EPC" ? "Input.Epc" : "Input.Upc", exception.Message);
+            ModelState.AddModelError("Input.Upc", exception.Message);
         }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {

@@ -11,6 +11,7 @@ public sealed partial class MongoProductRepository : IProductRepository
     private readonly IMongoClient _client;
     private readonly IMongoCollection<Product> _products;
     private readonly IMongoCollection<Reception> _receptions;
+    private readonly IMongoCollection<Item> _items;
     private readonly SemaphoreSlim _indexLock = new(1, 1);
     private bool _indexesReady;
 
@@ -20,14 +21,18 @@ public sealed partial class MongoProductRepository : IProductRepository
         var settings = options.Value;
         var database = client.GetDatabase(settings.DatabaseName);
         _codes = database.GetCollection<ProductCode>("product_codes");
+        _items = database.GetCollection<Item>("items");
         _products = database.GetCollection<Product>(settings.ProductsCollectionName);
         _receptions = database.GetCollection<Reception>(settings.ReceptionsCollectionName);
     }
 
-    public async Task<IReadOnlyList<Product>> GetAllAsync(CancellationToken cancellationToken = default) =>
-        await _products.Find(FilterDefinition<Product>.Empty)
+    public async Task<IReadOnlyList<Product>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureIndexesAsync(cancellationToken);
+        return await _products.Find(FilterDefinition<Product>.Empty)
             .SortBy(p => p.Name)
             .ToListAsync(cancellationToken);
+    }
 
     public async Task<Product?> GetByIdAsync(string id, CancellationToken cancellationToken = default) =>
         IsObjectId(id)
@@ -45,16 +50,36 @@ public sealed partial class MongoProductRepository : IProductRepository
         return await query.FirstOrDefaultAsync(cancellationToken);
     }
 
-    public async Task<Product?> FindByEpcAsync(string epc, CancellationToken cancellationToken = default,
-        IClientSessionHandle? session = null)
+    public async Task<Item?> FindItemAsync(string epc, CancellationToken token, IClientSessionHandle? session = null)
     {
-        var value = epc.Trim().ToUpperInvariant();
-        if (value.Length == 0) return null;
-        var query = session is null
-            ? _products.Find(p => p.Epc == value)
-            : _products.Find(session, p => p.Epc == value);
-        return await query.FirstOrDefaultAsync(cancellationToken);
+        var key = epc.Trim().ToUpperInvariant();
+        if (key.Length == 0) return null;
+        var query = session is null ? _items.Find(i => i.Epc == key) : _items.Find(session, i => i.Epc == key);
+        return await query.FirstOrDefaultAsync(token);
     }
+
+    public Task<List<Item>> ListItemsAsync(string? productId, string? status, int count, CancellationToken token)
+    {
+        var filter = Builders<Item>.Filter.Empty;
+        if (productId is not null) filter &= Builders<Item>.Filter.Eq(i => i.ProductId, productId);
+        if (status is not null) filter &= Builders<Item>.Filter.Eq(i => i.Status, status);
+        return _items.Find(filter).SortByDescending(i => i.ReceivedAtUtc).ThenBy(i => i.Epc)
+            .Limit(Math.Clamp(count, 1, 1000)).ToListAsync(token);
+    }
+
+    public async Task<Dictionary<string, int>> CountTaggedInStockAsync(CancellationToken token)
+    {
+        var counts = await _items.Aggregate()
+            .Match(i => i.Status == Item.InStock)
+            .Group(i => i.ProductId, g => new { ProductId = g.Key, Count = g.Count() })
+            .ToListAsync(token);
+        return counts.ToDictionary(c => c.ProductId, c => c.Count);
+    }
+
+    public async Task<int> CountTaggedInStockAsync(string productId, CancellationToken token, IClientSessionHandle? session = null) =>
+        (int)(session is null
+            ? await _items.CountDocumentsAsync(i => i.ProductId == productId && i.Status == Item.InStock, cancellationToken: token)
+            : await CountTaggedAsync(session, productId, token));
 
     public async Task AddAsync(Product product, CancellationToken cancellationToken = default)
     {
@@ -75,7 +100,7 @@ public sealed partial class MongoProductRepository : IProductRepository
         catch (MongoWriteException exception)
             when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            throw ToDuplicateException(exception, product);
+            throw new DuplicateProductCodeException("UPC", product.Upc);
         }
     }
 
@@ -92,7 +117,6 @@ public sealed partial class MongoProductRepository : IProductRepository
             .Set(p => p.Category, product.Category)
             .Set(p => p.Price, product.Price)
             .Set(p => p.Upc, product.Upc)
-            .Set(p => p.Epc, product.Epc)
             .Set(p => p.Producer, product.Producer)
             .Set(p => p.Description, product.Description)
             .Set(p => p.ImageUrl, product.ImageUrl)
@@ -104,9 +128,9 @@ public sealed partial class MongoProductRepository : IProductRepository
             {
                 var old = await _products.FindOneAndUpdateAsync<Product, Product>(session, p => p.Id == product.Id,
                     update, cancellationToken: token) ?? throw new ProductNotFoundException();
-                var retained = new[] { product.Upc.ToUpperInvariant(), product.Epc };
-                var removed = new[] { old.Upc.ToUpperInvariant(), old.Epc }.Except(retained).ToArray();
-                await _codes.DeleteManyAsync(session, c => c.ProductId == product.Id && removed.Contains(c.Code), cancellationToken: token);
+                var oldUpc = old.Upc.ToUpperInvariant();
+                if (oldUpc != product.Upc.ToUpperInvariant())
+                    await _codes.DeleteOneAsync(session, c => c.ProductId == product.Id && c.Code == oldUpc, cancellationToken: token);
                 await SavePrimaryCodesAsync(session, product, token);
                 return true;
             }, "Product update", product.Id!, cancellationToken);
@@ -114,7 +138,7 @@ public sealed partial class MongoProductRepository : IProductRepository
         catch (MongoWriteException exception)
             when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            throw ToDuplicateException(exception, product);
+            throw new DuplicateProductCodeException("UPC", product.Upc);
         }
     }
 
@@ -125,6 +149,7 @@ public sealed partial class MongoProductRepository : IProductRepository
         {
             var result = await _products.DeleteOneAsync(session, p => p.Id == id, cancellationToken: token);
             await _codes.DeleteManyAsync(session, c => c.ProductId == id, cancellationToken: token);
+            await _items.DeleteManyAsync(session, i => i.ProductId == id, cancellationToken: token);
             await _receptions.DeleteManyAsync(session, r => r.ProductId == id, cancellationToken: token);
             return result.DeletedCount == 1;
         }, "Product deletion", id, cancellationToken);
@@ -132,23 +157,77 @@ public sealed partial class MongoProductRepository : IProductRepository
 
     public async Task<Product> ReceiveStockAsync(Reception reception, CancellationToken cancellationToken = default)
     {
-        if (reception.Quantity < 1) throw new InvalidOperationException("Quantity must be at least 1.");
+        var untagged = reception.Quantity;
+        if (untagged < 0) throw new InvalidOperationException("Untagged units can't be negative.");
+        var requested = new List<string>();
+        foreach (var entry in reception.Epcs)
+        {
+            var epc = Item.NormalizeEpc(entry)
+                ?? throw new InvalidOperationException($"\"{entry}\" is not a valid EPC (4–128 hexadecimal characters).");
+            if (!requested.Contains(epc)) requested.Add(epc);
+        }
+        if (requested.Count == 0 && untagged < 1)
+            throw new InvalidOperationException("Scan at least one RFID tag or enter a number of untagged units.");
         if (!IsObjectId(reception.ProductId)) throw new ProductNotFoundException();
         await EnsureIndexesAsync(cancellationToken);
         reception.Id ??= ObjectId.GenerateNewId().ToString();
+        if (reception.CreatedAtUtc == default) reception.CreatedAtUtc = DateTime.UtcNow;
 
-        return await MongoTransaction.RunAsync(_client, async (session, token) =>
+        try
         {
-            var updated = await _products.FindOneAndUpdateAsync<Product, Product>(session,
-                p => p.Id == reception.ProductId,
-                Builders<Product>.Update
-                    .Inc(p => p.QuantityInStock, reception.Quantity)
-                    .Set(p => p.UpdatedAtUtc, DateTime.UtcNow),
-                new FindOneAndUpdateOptions<Product> { ReturnDocument = ReturnDocument.After },
-                token) ?? throw new ProductNotFoundException();
-            await _receptions.InsertOneAsync(session, reception, cancellationToken: token);
-            return updated;
-        }, "Delivery receiving", reception.Id, cancellationToken);
+            return await MongoTransaction.RunAsync(_client, async (session, token) =>
+            {
+                // Lock the product first so a concurrent sale or deletion conflicts with this delivery.
+                var product = await _products.FindOneAndUpdateAsync<Product, Product>(session,
+                    p => p.Id == reception.ProductId,
+                    Builders<Product>.Update.Set(p => p.UpdatedAtUtc, DateTime.UtcNow),
+                    cancellationToken: token) ?? throw new ProductNotFoundException();
+
+                var existing = await _items.Find(session, i => requested.Contains(i.Epc)).ToListAsync(token);
+                foreach (var item in existing)
+                {
+                    if (item.ProductId != product.Id)
+                        throw new InvalidOperationException($"Tag {item.Epc} is already registered to another product.");
+                    if (item.Status != Item.InStock)
+                        throw new InvalidOperationException($"Tag {item.Epc} was already sold. Remove it from this delivery.");
+                }
+                var known = existing.Select(i => i.Epc).ToHashSet(StringComparer.Ordinal);
+                var fresh = requested.Where(epc => !known.Contains(epc)).ToList();
+                if (fresh.Count > 0)
+                {
+                    var clash = await _codes.Find(session, c => fresh.Contains(c.Code)).FirstOrDefaultAsync(token);
+                    if (clash is not null)
+                        throw new InvalidOperationException($"{clash.Code} is saved as a product barcode, not an RFID tag.");
+                }
+
+                var total = fresh.Count + untagged;
+                if (total == 0)
+                    throw new InvalidOperationException("Every scanned tag is already in stock. Nothing was received.");
+
+                // Recomputed on each attempt, so a retried transaction never keeps stale values.
+                reception.Epcs = fresh;
+                reception.Quantity = total;
+                if (fresh.Count > 0)
+                {
+                    await _items.InsertManyAsync(session, fresh.Select(epc => new Item
+                    {
+                        Epc = epc, ProductId = product.Id!, Status = Item.InStock,
+                        ReceptionId = reception.Id, ReceivedAtUtc = reception.CreatedAtUtc
+                    }), cancellationToken: token);
+                }
+                var updated = await _products.FindOneAndUpdateAsync<Product, Product>(session,
+                    p => p.Id == reception.ProductId,
+                    Builders<Product>.Update.Inc(p => p.QuantityInStock, total),
+                    new FindOneAndUpdateOptions<Product> { ReturnDocument = ReturnDocument.After },
+                    token) ?? throw new ProductNotFoundException();
+                await _receptions.InsertOneAsync(session, reception, cancellationToken: token);
+                return updated;
+            }, "Delivery receiving", reception.Id, cancellationToken);
+        }
+        catch (Exception exception) when (IsDuplicateKey(exception))
+        {
+            throw new InvalidOperationException("One of these tags was just registered by another delivery. Scan the delivery again.");
+        }
     }
 
     public async Task<IReadOnlyList<Reception>> GetReceptionsAsync(
@@ -175,20 +254,45 @@ public sealed partial class MongoProductRepository : IProductRepository
     public async Task<bool> DeleteReceptionAsync(string receptionId, CancellationToken cancellationToken = default)
     {
         if (!IsObjectId(receptionId)) return false;
+        const string alreadySold = "This delivery can't be undone because some of its units have already been sold.";
         return await MongoTransaction.RunAsync(_client, async (session, token) =>
         {
             var reception = await _receptions.FindOneAndDeleteAsync(session,
                 r => r.Id == receptionId, cancellationToken: token);
             if (reception is null) return false;
+            if (!await _products.Find(session, p => p.Id == reception.ProductId).AnyAsync(token)) return true;
 
-            if (!await DecrementStockAsync(session, reception.ProductId, reception.Quantity, token) &&
-                await _products.Find(session, p => p.Id == reception.ProductId).AnyAsync(token))
+            if (reception.Epcs.Count > 0)
             {
-                throw new InvalidOperationException(
-                    "This delivery can't be undone because some of its units have already been sold.");
+                var removed = await _items.DeleteManyAsync(session, i => reception.Epcs.Contains(i.Epc) &&
+                    i.ProductId == reception.ProductId && i.Status == Item.InStock, cancellationToken: token);
+                if (removed.DeletedCount != reception.Epcs.Count) throw new InvalidOperationException(alreadySold);
             }
+            if (!await DecrementStockAsync(session, reception.ProductId, reception.Quantity, token) ||
+                !await StockCoversTagsAsync(session, reception.ProductId, token))
+                throw new InvalidOperationException(alreadySold);
             return true;
         }, "Delivery undo", receptionId, cancellationToken);
+    }
+
+    public async Task SellAsync(IClientSessionHandle session, string productId, int quantity,
+        IReadOnlyCollection<string> epcs, string saleId, CancellationToken cancellationToken = default)
+    {
+        if (quantity < epcs.Count || quantity < 1) throw new ArgumentOutOfRangeException(nameof(quantity));
+        if (epcs.Count > 0)
+        {
+            var sold = await _items.UpdateManyAsync(session,
+                i => epcs.Contains(i.Epc) && i.ProductId == productId && i.Status == Item.InStock,
+                Builders<Item>.Update.Set(i => i.Status, Item.Sold).Set(i => i.SaleId, saleId)
+                    .Set(i => i.SoldAtUtc, DateTime.UtcNow),
+                cancellationToken: cancellationToken);
+            if (sold.ModifiedCount != epcs.Count)
+                throw new InvalidOperationException("A scanned item was already sold. Review your cart and try again.");
+        }
+        // Untagged units may only come from stock that has no tag; tagged units must be sold by tag.
+        if (!await DecrementStockAsync(session, productId, quantity, cancellationToken) ||
+            !await StockCoversTagsAsync(session, productId, cancellationToken))
+            throw new InvalidOperationException("Stock changed. Review your cart and try again.");
     }
 
     public async Task<bool> DecrementStockAsync(IClientSessionHandle session, string productId, int quantity,
@@ -206,11 +310,20 @@ public sealed partial class MongoProductRepository : IProductRepository
         return result.ModifiedCount == 1;
     }
 
+    // Stock counts tagged and untagged units, so it can never be below the in-stock tag count.
+    private async Task<bool> StockCoversTagsAsync(IClientSessionHandle session, string productId, CancellationToken token)
+    {
+        var product = await _products.Find(session, p => p.Id == productId).FirstOrDefaultAsync(token);
+        return product is not null && product.QuantityInStock >= await CountTaggedAsync(session, productId, token);
+    }
+
+    private Task<long> CountTaggedAsync(IClientSessionHandle session, string productId, CancellationToken token) =>
+        _items.CountDocumentsAsync(session, i => i.ProductId == productId && i.Status == Item.InStock, cancellationToken: token);
+
     private async Task ThrowIfCodesTakenAsync(Product product, CancellationToken cancellationToken)
     {
-        // Store codes in one format so lookups and the unique indexes always match.
+        // Store codes in one format so lookups and the unique index always match.
         product.Upc = product.Upc.Trim();
-        product.Epc = product.Epc.Trim().ToUpperInvariant();
 
         var otherProducts = product.Id is null
             ? Builders<Product>.Filter.Empty
@@ -219,16 +332,14 @@ public sealed partial class MongoProductRepository : IProductRepository
         if (await _products.Find(otherProducts & Builders<Product>.Filter.Eq(p => p.Upc, product.Upc))
                 .AnyAsync(cancellationToken))
             throw new DuplicateProductCodeException("UPC", product.Upc);
-
-        if (await _products.Find(otherProducts & Builders<Product>.Filter.Eq(p => p.Epc, product.Epc))
-                .AnyAsync(cancellationToken))
-            throw new DuplicateProductCodeException("EPC", product.Epc);
     }
 
-    private static DuplicateProductCodeException ToDuplicateException(MongoWriteException exception, Product product) =>
-        exception.Message.Contains("ux_products_epc", StringComparison.Ordinal)
-            ? new DuplicateProductCodeException("EPC", product.Epc)
-            : new DuplicateProductCodeException("UPC", product.Upc);
+    private static bool IsDuplicateKey(Exception exception) => exception switch
+    {
+        MongoWriteException write => write.WriteError?.Category == ServerErrorCategory.DuplicateKey,
+        MongoBulkWriteException bulk => bulk.WriteErrors.Any(e => e.Category == ServerErrorCategory.DuplicateKey),
+        _ => false
+    };
 
     private static bool IsObjectId(string? id) => id is not null && ObjectId.TryParse(id, out _);
 
@@ -241,14 +352,17 @@ public sealed partial class MongoProductRepository : IProductRepository
         {
             if (_indexesReady) return;
 
+            // Products no longer carry an EPC. The old unique index would reject every
+            // second product once the field is gone, so it is dropped before anything else.
+            try { await _products.Indexes.DropOneAsync("ux_products_epc", cancellationToken); }
+            catch (MongoCommandException exception)
+                when (exception.CodeName is "IndexNotFound" or "NamespaceNotFound") { }
+
             await _products.Indexes.CreateManyAsync(
             [
                 new CreateIndexModel<Product>(
                     Builders<Product>.IndexKeys.Ascending(p => p.Upc),
                     new CreateIndexOptions { Name = "ux_products_upc", Unique = true }),
-                new CreateIndexModel<Product>(
-                    Builders<Product>.IndexKeys.Ascending(p => p.Epc),
-                    new CreateIndexOptions { Name = "ux_products_epc", Unique = true }),
                 new CreateIndexModel<Product>(
                     Builders<Product>.IndexKeys.Ascending(p => p.Category),
                     new CreateIndexOptions { Name = "ix_products_category" })
@@ -262,6 +376,13 @@ public sealed partial class MongoProductRepository : IProductRepository
                     new CreateIndexOptions { Name = "ix_receptions_product_receivedOn" }),
                 cancellationToken: cancellationToken);
 
+            await _items.Indexes.CreateOneAsync(
+                new CreateIndexModel<Item>(
+                    Builders<Item>.IndexKeys.Ascending(i => i.ProductId).Ascending(i => i.Status),
+                    new CreateIndexOptions { Name = "ix_items_product_status" }),
+                cancellationToken: cancellationToken);
+
+            await MigrateLegacyEpcsAsync(cancellationToken);
             _indexesReady = true;
         }
         finally

@@ -55,7 +55,8 @@ public sealed class StoreDemo
     public async Task<IReadOnlyList<DemoProduct>> GetProductsAsync(CancellationToken cancellationToken)
     {
         var products = await _products.GetAllAsync(cancellationToken);
-        return products.Select(p => new DemoProduct(p.Upc, p.Name, p.Price, p.QuantityInStock, p.Epc))
+        // Products no longer have one EPC; each tagged unit is an Item with its own.
+        return products.Select(p => new DemoProduct(p.Upc, p.Name, p.Price, p.QuantityInStock, "per item"))
             .OrderBy(p => p.Code).ToList();
     }
 

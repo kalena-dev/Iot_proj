@@ -22,11 +22,6 @@ public sealed class ProductInput
     [Display(Name = "UPC (barcode)")]
     public string Upc { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Scan or type the RFID EPC.")]
-    [RegularExpression(@"^\s*[0-9A-Fa-f]{1,24}\s*$", ErrorMessage = "EPC must be hexadecimal (0–9, A–F), at most 24 characters.")]
-    [Display(Name = "EPC (RFID tag)")]
-    public string Epc { get; set; } = string.Empty;
-
     [Required(ErrorMessage = "Enter the producer company.")]
     [StringLength(100, MinimumLength = 2, ErrorMessage = "Producer must be 2–100 characters.")]
     [Display(Name = "Producer company")]
@@ -46,7 +41,6 @@ public sealed class ProductInput
         Category = product.Category,
         Price = product.Price,
         Upc = product.Upc,
-        Epc = product.Epc,
         Producer = product.Producer,
         Description = product.Description,
         ImageUrl = product.ImageUrl
@@ -59,7 +53,6 @@ public sealed class ProductInput
         product.Category = Category.Trim();
         product.Price = decimal.Round(Price ?? 0, 2);
         product.Upc = Upc.Trim();
-        product.Epc = Epc.Trim().ToUpperInvariant();
         product.Producer = Producer.Trim();
         product.Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim();
         product.ImageUrl = string.IsNullOrWhiteSpace(ImageUrl) ? null : ImageUrl.Trim();
@@ -70,7 +63,7 @@ public sealed class ProductInput
     {
         var product = new Product
         {
-            Name = "", Category = "", Upc = "", Epc = "", Producer = "",
+            Name = "", Category = "", Upc = "", Producer = "",
             CreatedAtUtc = DateTime.UtcNow
         };
         ApplyTo(product);

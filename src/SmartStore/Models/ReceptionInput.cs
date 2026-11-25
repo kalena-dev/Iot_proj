@@ -4,13 +4,19 @@ namespace SmartStore.Models;
 
 public sealed class ReceptionInput
 {
+    public const int MaxTags = 500;
+
     [Required(ErrorMessage = "Choose a product.")]
     [Display(Name = "Product")]
     public string ProductId { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Enter the quantity received.")]
-    [Range(1, 9999, ErrorMessage = "Quantity must be between 1 and 9999.")]
-    [Display(Name = "Quantity received")]
+    // One EPC per scanned unit, separated by new lines, spaces or commas.
+    [StringLength(MaxTags * 130, ErrorMessage = "Too many tags for one delivery.")]
+    [Display(Name = "Scanned RFID tags")]
+    public string? Tags { get; set; }
+
+    [Range(0, 9999, ErrorMessage = "Untagged units must be between 0 and 9999.")]
+    [Display(Name = "Untagged units (no RFID)")]
     public int? Quantity { get; set; }
 
     [Required(ErrorMessage = "Enter the date received.")]
@@ -26,10 +32,28 @@ public sealed class ReceptionInput
     [Display(Name = "Supplier / note (optional)")]
     public string? Note { get; set; }
 
+    public static IReadOnlyList<string> SplitTags(string? tags) =>
+        (tags ?? "").Split([' ', '\t', '\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries);
+
+    // Distinct, normalized EPCs, plus the entries that are not valid EPCs.
+    public (List<string> Epcs, List<string> Invalid) ParseTags()
+    {
+        var epcs = new List<string>();
+        var invalid = new List<string>();
+        foreach (var entry in SplitTags(Tags))
+        {
+            if (Item.NormalizeEpc(entry) is { } epc) { if (!epcs.Contains(epc)) epcs.Add(epc); }
+            else invalid.Add(entry);
+        }
+        return (epcs, invalid);
+    }
+
+    // Quantity on the returned reception is the untagged count; the repository adds the new tags.
     public Reception ToReception() => new()
     {
         ProductId = ProductId,
         Quantity = Quantity ?? 0,
+        Epcs = ParseTags().Epcs,
         ReceivedOn = DateTime.SpecifyKind(ReceivedOn!.Value.Date, DateTimeKind.Utc),
         ExpiresOn = ExpiresOn is { } expires ? DateTime.SpecifyKind(expires.Date, DateTimeKind.Utc) : null,
         Note = string.IsNullOrWhiteSpace(Note) ? null : Note.Trim(),

@@ -3,8 +3,12 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace SmartStore.Models;
 
-// A product is defined once. Its stock only changes through receptions (stock in)
-// and checkout sales (stock out), never by typing a new number.
+// A product type, identified by its UPC. Each physical unit carries its own EPC (see Item).
+// Its stock only changes through receptions (stock in) and checkout sales (stock out),
+// never by typing a new number. QuantityInStock counts tagged and untagged units; it is
+// always at least the number of this product's in-stock items.
+// Older documents may still hold a legacy "epc" field until they are migrated.
+[BsonIgnoreExtraElements]
 public sealed class Product
 {
     [BsonId]
@@ -24,10 +28,6 @@ public sealed class Product
     // Barcode, digits only, at most 13 characters. Unique.
     [BsonElement("upc")]
     public required string Upc { get; set; }
-
-    // RFID tag code, uppercase hex, at most 24 characters. Unique.
-    [BsonElement("epc")]
-    public required string Epc { get; set; }
 
     [BsonElement("producer")]
     public required string Producer { get; set; }

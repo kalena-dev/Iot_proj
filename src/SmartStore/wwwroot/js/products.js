@@ -19,6 +19,27 @@
     input.form?.addEventListener('submit', () => { input.value = input.value.trim(); });
   });
 
+  // Receive page: count the scanned tags, and generate test tags when no reader is at hand.
+  const tagBox = document.querySelector('textarea[data-receive-tags]');
+  const tagCount = document.querySelector('[data-tag-count]');
+  const countTags = () => {
+    const tags = new Set(tagBox.value.split(/[\s,;]+/).filter(Boolean).map(t => t.toUpperCase()));
+    tagCount.textContent = `${tags.size} tag${tags.size === 1 ? '' : 's'}`;
+  };
+  if (tagBox && tagCount) {
+    tagBox.addEventListener('input', countTags);
+    countTags();
+    document.querySelector('[data-simulate-tags]')?.addEventListener('click', () => {
+      // 96-bit EPCs (24 hex digits), random so each one is a new unit.
+      const bytes = () => [...crypto.getRandomValues(new Uint8Array(12))]
+        .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+      const fresh = Array.from({ length: 3 }, bytes);
+      tagBox.value = [tagBox.value.trim(), ...fresh].filter(Boolean).join('\n') + '\n';
+      countTags();
+      tagBox.focus();
+    });
+  }
+
   // Receive page: picking a product from the list loads its history.
   const productSelect = document.querySelector('select[data-navigate-receive]');
   productSelect?.addEventListener('change', () => {

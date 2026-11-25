@@ -40,7 +40,7 @@ public sealed class EditModel(IProductRepository repository, ILogger<EditModel> 
             }
             catch (DuplicateProductCodeException exception)
             {
-                ModelState.AddModelError(exception.Field == "EPC" ? "Input.Epc" : "Input.Upc", exception.Message);
+                ModelState.AddModelError("Input.Upc", exception.Message);
             }
             catch (ProductNotFoundException)
             {

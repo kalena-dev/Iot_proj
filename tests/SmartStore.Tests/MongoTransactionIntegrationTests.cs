@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using SmartStore.Data;
+using SmartStore.Models;
 using SmartStore.Services;
 
 namespace SmartStore.Tests;
@@ -55,7 +56,122 @@ public sealed class MongoTransactionIntegrationTests
     public Task ConcurrentDuplicateUpcAllowsOnlyOneProduct() => AssertConcurrentDuplicateAsync("UPC");
 
     [MongoReplicaSetFact]
-    public Task ConcurrentDuplicateEpcAllowsOnlyOneProduct() => AssertConcurrentDuplicateAsync("EPC");
+    public async Task ConcurrentReceivingOfOneTagRegistersItForOneProductOnly()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var first = await db.AddProductAsync(ordinal: 1);
+        var second = await db.AddProductAsync(ordinal: 2);
+
+        var failures = await RunTogetherAsync(
+            () => Record.ExceptionAsync(() => db.Products.ReceiveStockAsync(
+                MongoTestDatabase.NewTaggedReception(first, 1, "E200AA01"), db.Token)),
+            () => Record.ExceptionAsync(() => db.Products.ReceiveStockAsync(
+                MongoTestDatabase.NewTaggedReception(second, 1, "E200AA01"), db.Token)));
+
+        Assert.Single(failures, failure => failure is null);
+        Assert.IsType<InvalidOperationException>(Assert.Single(failures, failure => failure is not null));
+        var stock = (await db.ReadProductAsync(first))!.QuantityInStock + (await db.ReadProductAsync(second))!.QuantityInStock;
+        Assert.Equal(1, stock);
+        Assert.Single((await db.ReadItemsAsync(first)).Concat(await db.ReadItemsAsync(second)));
+    }
+
+    [MongoReplicaSetFact]
+    public async Task ReceivingTagsRegistersOneItemPerUnitAndSkipsRescans()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var product = await db.AddProductAsync();
+        var first = MongoTestDatabase.NewTaggedReception(product, 1, "e200aa01", "E200AA02", "E200AA02");
+        first.Quantity = 3;
+
+        var afterFirst = await db.Products.ReceiveStockAsync(first, db.Token);
+        var rescan = MongoTestDatabase.NewTaggedReception(product, 2, "E200AA02", "E200AA03");
+        var afterRescan = await db.Products.ReceiveStockAsync(rescan, db.Token);
+
+        Assert.Equal(5, afterFirst.QuantityInStock);
+        Assert.Equal(["E200AA01", "E200AA02"], first.Epcs);
+        Assert.Equal(5, first.Quantity);
+        Assert.Equal(["E200AA03"], rescan.Epcs);
+        Assert.Equal(1, rescan.Quantity);
+        Assert.Equal(6, afterRescan.QuantityInStock);
+        var items = await db.ReadItemsAsync(product);
+        Assert.Equal(["E200AA01", "E200AA02", "E200AA03"], items.Select(i => i.Epc).Order());
+        Assert.All(items, i => Assert.Equal(Item.InStock, i.Status));
+        Assert.Equal(first.Id, items.Single(i => i.Epc == "E200AA01").ReceptionId);
+        Assert.Equal(3, await db.Products.CountTaggedInStockAsync(product.Id!, db.Token));
+        Assert.Equal((product.Id, true), (await db.Products.ResolveCodeAsync("e200aa03", db.Token)) is { } r ? (r.Product.Id, r.IsTag) : default);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.Products.ReceiveStockAsync(
+            MongoTestDatabase.NewTaggedReception(product, 3, "E200AA01"), db.Token));
+        Assert.Equal(6, (await db.ReadProductAsync(product))!.QuantityInStock);
+    }
+
+    [MongoReplicaSetFact]
+    public async Task TagsOfAnotherProductOrSoldUnitsRejectTheWholeDelivery()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var chair = await db.AddProductAsync(ordinal: 1);
+        var table = await db.AddProductAsync(ordinal: 2);
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(chair, 1, "C0C0", "C0C1"), db.Token);
+        await db.MarkSoldAsync("C0C1");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.Products.ReceiveStockAsync(
+            MongoTestDatabase.NewTaggedReception(table, 2, "7AB1E0", "C0C0"), db.Token));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.Products.ReceiveStockAsync(
+            MongoTestDatabase.NewTaggedReception(chair, 2, "C0C2", "C0C1"), db.Token));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.Products.ReceiveStockAsync(
+            MongoTestDatabase.NewTaggedReception(chair, 2, "not-a-tag"), db.Token));
+
+        Assert.Equal(0, (await db.ReadProductAsync(table))!.QuantityInStock);
+        Assert.Empty(await db.ReadItemsAsync(table));
+        Assert.Equal(2, (await db.ReadItemsAsync(chair)).Count);
+        Assert.Single(await db.ReadReceptionsAsync(chair));
+    }
+
+    [MongoReplicaSetFact]
+    public async Task UndoUnregistersTagsUnlessOneWasSold()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var product = await db.AddProductAsync();
+        var kept = MongoTestDatabase.NewTaggedReception(product, 1, "AB01", "AB02");
+        var undone = MongoTestDatabase.NewTaggedReception(product, 2, "AB03");
+        undone.Quantity = 2;
+        await db.Products.ReceiveStockAsync(kept, db.Token);
+        await db.Products.ReceiveStockAsync(undone, db.Token);
+
+        Assert.True(await db.Products.DeleteReceptionAsync(undone.Id!, db.Token));
+        Assert.Equal(2, (await db.ReadProductAsync(product))!.QuantityInStock);
+        Assert.Equal(["AB01", "AB02"], (await db.ReadItemsAsync(product)).Select(i => i.Epc).Order());
+
+        await db.MarkSoldAsync("AB02");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.Products.DeleteReceptionAsync(kept.Id!, db.Token));
+        Assert.Equal(2, (await db.ReadItemsAsync(product)).Count);
+        Assert.Single(await db.ReadReceptionsAsync(product));
+    }
+
+    [MongoReplicaSetFact]
+    public async Task LegacyProductEpcsBecomeItemsUpToStockAndTheOldIndexIsDropped()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var stocked = await db.InsertLegacyProductAsync(1, "AAAA0001", stock: 3);
+        var empty = await db.InsertLegacyProductAsync(2, "BBBB0002", stock: 0);
+
+        await db.Products.BackfillCodesAsync(db.Token);
+        await db.Products.BackfillCodesAsync(db.Token);
+
+        Assert.DoesNotContain("ux_products_epc", await db.ReadProductIndexNamesAsync());
+        Assert.False((await db.ReadRawProductAsync(stocked)).Contains("epc"));
+        Assert.False((await db.ReadRawProductAsync(empty)).Contains("epc"));
+        var item = await db.Products.FindItemAsync("aaaa0001", db.Token);
+        Assert.Equal(stocked, item?.ProductId);
+        Assert.Equal(Item.InStock, item?.Status);
+        Assert.Null(await db.Products.FindItemAsync("BBBB0002", db.Token));
+        Assert.Equal(3, (await db.Products.GetByIdAsync(stocked, db.Token))!.QuantityInStock);
+
+        // Without the old unique index, products without an EPC no longer collide.
+        await db.AddProductAsync(ordinal: 1);
+        await db.AddProductAsync(ordinal: 2);
+        Assert.Equal(4, (await db.ReadProductsAsync()).Count);
+    }
 
     [MongoReplicaSetFact]
     public async Task ApprovedCheckoutPersistsAuthoritativeReceiptStockAndLoyaltyTogether()
@@ -142,12 +258,15 @@ public sealed class MongoTransactionIntegrationTests
     public async Task UpcAndEpcAliasesBecomeOneSaleLineAndOneCombinedStockDeduction()
     {
         await using var db = await MongoTestDatabase.CreateAsync();
-        var product = await db.AddProductAsync(stock: 10, price: 3.25m);
+        var product = await db.AddProductAsync(stock: 7, price: 3.25m);
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(product, 2, "E200F001", "E200F002", "E200F003"), db.Token);
 
         var sale = await db.Store.CheckoutAsync(new Dictionary<string, int>
         {
             [product.Upc] = 2,
-            [product.Epc.ToLowerInvariant()] = 3
+            ["e200f001"] = 1,
+            ["E200F002"] = 1,
+            ["E200F003"] = 1
         }, "approve", null, db.Token);
 
         var stored = Assert.Single(await db.ReadSalesAsync());
@@ -382,17 +501,20 @@ public sealed class MongoTransactionIntegrationTests
         await db.Products.AssignCodeAsync(" long scanned/case-017 ", first.Upc, db.Token);
         await db.Products.AssignCodeAsync("aa00", first.Upc, db.Token);
         await Assert.ThrowsAsync<DuplicateProductCodeException>(() => db.Products.AssignCodeAsync("AA00", other.Upc, db.Token));
-        var oldEpc = first.Epc;
-        first.Epc = "EE00";
+        // A registered RFID tag identifies one unit and can't become a barcode.
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(first, 2, "EE00"), db.Token);
+        await Assert.ThrowsAsync<DuplicateProductCodeException>(() => db.Products.AssignCodeAsync("ee00", first.Upc, db.Token));
+        first.Upc = "1999999999999";
         await db.Products.UpdateAsync(first, db.Token);
-        Assert.Null(await db.Products.ResolveCodeAsync(oldEpc, db.Token));
-        Assert.Equal(first.Id, (await db.Products.ResolveCodeAsync("aa00", db.Token))?.Product.Id);
+        Assert.Equal((first.Id, false), (await db.Products.ResolveCodeAsync("aa00", db.Token)) is { } alias ? (alias.Product.Id, alias.IsTag) : default);
+        Assert.Equal((first.Id, true), (await db.Products.ResolveCodeAsync("ee00", db.Token)) is { } tag ? (tag.Product.Id, tag.IsTag) : default);
         await db.Store.BackfillCheckoutRecordsAsync(db.Token);
         await db.Store.BackfillCheckoutRecordsAsync(db.Token);
         var sale = await db.Store.CheckoutAsync(new() { ["long scanned/case-017"] = 1, ["AA00"] = 1 }, "approve", null, db.Token);
         Assert.Equal(2, Assert.Single(sale.Items).Quantity);
         await db.Products.DeleteAsync(first.Id!, db.Token);
         Assert.Null(await db.Products.ResolveCodeAsync("AA00", db.Token));
+        Assert.Null(await db.Products.ResolveCodeAsync("EE00", db.Token));
     }
 
     [MongoReplicaSetFact]
@@ -417,8 +539,7 @@ public sealed class MongoTransactionIntegrationTests
         await using var db = await MongoTestDatabase.CreateAsync();
         var first = MongoTestDatabase.NewProduct(ordinal: 1);
         var second = MongoTestDatabase.NewProduct(ordinal: 2);
-        if (field == "UPC") second.Upc = first.Upc;
-        else second.Epc = first.Epc;
+        second.Upc = first.Upc;
 
         var failures = await RunTogetherAsync(
             () => Record.ExceptionAsync(() => db.Products.AddAsync(first, db.Token)),
@@ -428,7 +549,7 @@ public sealed class MongoTransactionIntegrationTests
         var failure = Assert.Single(failures, error => error is not null);
         Assert.Equal(field, Assert.IsType<DuplicateProductCodeException>(failure).Field);
         var stored = Assert.Single(await db.ReadProductsAsync());
-        Assert.Equal(field == "UPC" ? first.Upc : first.Epc, field == "UPC" ? stored.Upc : stored.Epc);
+        Assert.Equal(first.Upc, stored.Upc);
         Assert.Equal(0, stored.QuantityInStock);
     }
 

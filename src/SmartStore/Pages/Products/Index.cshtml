@@ -82,14 +82,19 @@
                                     </div>
                                 </td>
                                 <td>@product.Category</td>
-                                <td><code>@product.Upc</code><br /><code class="epc">@product.Epc</code>
-                                    @foreach (var alias in Model.Codes[product.Id!].Except(new[] { product.Upc, product.Epc }, StringComparer.OrdinalIgnoreCase))
+                                <td><code>@product.Upc</code>
+                                    @foreach (var alias in Model.Codes[product.Id!].Except(new[] { product.Upc }, StringComparer.OrdinalIgnoreCase))
                                     {
                                         <br /><code>@alias</code>
                                     }
                                 </td>
                                 <td class="num">@product.Price.ToString("C", System.Globalization.CultureInfo.GetCultureInfo("en-CA"))</td>
-                                <td class="num"><span class="stock @stockClass">@product.QuantityInStock</span></td>
+                                <td class="num"><span class="stock @stockClass">@product.QuantityInStock</span>
+                                    @if (Model.Tagged.GetValueOrDefault(product.Id!) is > 0 and var tagged)
+                                    {
+                                        <br /><small>@tagged RFID-tagged</small>
+                                    }
+                                </td>
                                 <td class="row-actions">
                                     <a asp-page="Receive" asp-route-id="@product.Id">Receive</a>
                                     <a asp-page="Edit" asp-route-id="@product.Id">Edit</a>

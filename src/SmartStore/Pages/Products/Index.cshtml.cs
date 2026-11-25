@@ -15,6 +15,7 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
     public IReadOnlyList<Product> Items { get; private set; } = [];
     public IReadOnlyList<string> Categories { get; private set; } = [];
     public ILookup<string, string> Codes { get; private set; } = Array.Empty<ProductCode>().ToLookup(c => c.ProductId, c => c.Code);
+    public IReadOnlyDictionary<string, int> Tagged { get; private set; } = new Dictionary<string, int>();
     public int TotalCount { get; private set; }
     public string? DatabaseWarning { get; private set; }
 
@@ -27,6 +28,7 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
         {
             var all = await repository.GetAllAsync(cancellationToken);
             Codes = (await repository.ListCodesAsync(cancellationToken)).ToLookup(c => c.ProductId, c => c.Code);
+            Tagged = await repository.CountTaggedInStockAsync(cancellationToken);
             TotalCount = all.Count;
             Categories = all.Select(p => p.Category).Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList();
 
@@ -36,11 +38,13 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
             if (!string.IsNullOrWhiteSpace(Q))
             {
                 var term = Q.Trim();
+                // A scanned RFID tag finds the product that unit belongs to.
+                var taggedProductId = (await repository.FindItemAsync(term, cancellationToken))?.ProductId;
                 filtered = filtered.Where(p =>
                     p.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
                     p.Producer.Contains(term, StringComparison.OrdinalIgnoreCase) ||
                     p.Upc.Equals(term, StringComparison.Ordinal) ||
-                    p.Epc.Equals(term, StringComparison.OrdinalIgnoreCase) ||
+                    p.Id == taggedProductId ||
                     Codes[p.Id!].Contains(term, StringComparer.OrdinalIgnoreCase));
             }
             Items = filtered.ToList();

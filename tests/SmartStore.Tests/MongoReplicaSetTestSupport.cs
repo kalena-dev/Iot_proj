@@ -91,7 +91,7 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
             if (!hello.TryGetValue("setName", out var setName) || string.IsNullOrWhiteSpace(setName.AsString))
                 throw new InvalidOperationException("Persistence tests require a replica set; a standalone mongod cannot run these transactions.");
 
-            foreach (var collection in new[] { "products", "receptions", "customers", "demo_sales", "email_log" })
+            foreach (var collection in new[] { "products", "receptions", "items", "customers", "demo_sales", "email_log" })
                 await database._database.CreateCollectionAsync(collection, cancellationToken: database.Token);
             return database;
         }
@@ -108,7 +108,6 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
         Category = "Integration tests",
         Price = price,
         Upc = (1_000_000_000_000L + ordinal).ToString(CultureInfo.InvariantCulture),
-        Epc = $"A{ordinal:X23}",
         Producer = "Test producer",
         CreatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
         UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -164,6 +163,45 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
 
     public Task<List<DemoSale>> ReadSalesAsync() =>
         _observerDatabase.GetCollection<DemoSale>("demo_sales").Find(FilterDefinition<DemoSale>.Empty).ToListAsync(Token);
+
+    public static Reception NewTaggedReception(Product product, int day, params string[] epcs)
+    {
+        var reception = NewReception(product, 0, day);
+        reception.Epcs = [.. epcs];
+        return reception;
+    }
+
+    public Task<List<Item>> ReadItemsAsync(Product product) =>
+        _observerDatabase.GetCollection<Item>("items").Find(i => i.ProductId == product.Id).ToListAsync(Token);
+
+    // Stands in for checkout marking a tagged unit sold.
+    public Task MarkSoldAsync(string epc) => _database.GetCollection<Item>("items").UpdateOneAsync(
+        i => i.Epc == epc, Builders<Item>.Update.Set(i => i.Status, Item.Sold), cancellationToken: Token);
+
+    // Writes a product as the old one-EPC-per-product model stored it.
+    public async Task<string> InsertLegacyProductAsync(int ordinal, string epc, int stock)
+    {
+        var products = _database.GetCollection<BsonDocument>("products");
+        await products.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            new BsonDocument("epc", 1), new CreateIndexOptions { Name = "ux_products_epc", Unique = true }),
+            cancellationToken: Token);
+        var id = ObjectId.GenerateNewId();
+        await products.InsertOneAsync(new BsonDocument
+        {
+            { "_id", id }, { "name", $"Legacy product {ordinal}" }, { "category", "Legacy" },
+            { "price", new Decimal128(5m) }, { "upc", (2_000_000_000_000L + ordinal).ToString(CultureInfo.InvariantCulture) },
+            { "epc", epc }, { "producer", "Old catalog" }, { "quantityInStock", stock },
+            { "createdAtUtc", DateTime.UtcNow }, { "updatedAtUtc", DateTime.UtcNow }
+        }, cancellationToken: Token);
+        return id.ToString();
+    }
+
+    public Task<BsonDocument> ReadRawProductAsync(string id) =>
+        _observerDatabase.GetCollection<BsonDocument>("products").Find(new BsonDocument("_id", ObjectId.Parse(id))).SingleAsync(Token);
+
+    public async Task<List<string>> ReadProductIndexNamesAsync() =>
+        (await (await _observerDatabase.GetCollection<BsonDocument>("products").Indexes.ListAsync(Token)).ToListAsync(Token))
+            .Select(i => i["name"].AsString).ToList();
 
     public Task<List<Reception>> ReadReceptionsAsync(Product product) =>
         _observerDatabase.GetCollection<Reception>("receptions").Find(r => r.ProductId == product.Id).ToListAsync(Token);

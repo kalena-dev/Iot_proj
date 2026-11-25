@@ -9,7 +9,7 @@
     <div class="hero__copy">
         <span class="eyebrow">Inventory · receiving</span>
         <h1>Receive stock</h1>
-        <p>Record each delivery. The quantity is added to the product's stock and kept in its delivery history.</p>
+        <p>Choose the product, then scan each unit's RFID tag. Every new tag is registered as one item and adds one to stock. Products without tags can be received by quantity.</p>
     </div>
     <div class="products-actions">
         <a class="secondary-button" asp-page="Index">← All products</a>
@@ -36,9 +36,9 @@ else
     <div class="workspace">
         <section class="panel form-panel">
             <form method="get" class="products-filter scan-lookup" asp-route-id="">
-                <label for="Code">Scan a barcode or RFID tag to find the product</label>
+                <label for="Code">Scan a UPC barcode to find the product</label>
                 <div>
-                    <input asp-for="Code" type="search" placeholder="UPC or EPC" autocomplete="off" data-scan-submit autofocus="@(Model.Selected is null)" />
+                    <input asp-for="Code" type="search" placeholder="UPC, barcode or registered tag" autocomplete="off" data-scan-submit autofocus="@(Model.Selected is null)" />
                     <button type="submit" class="secondary-button">Find</button>
                 </div>
             </form>
@@ -59,9 +59,21 @@ else
                             </select>
                             <span asp-validation-for="Input.ProductId" class="field-error"></span>
                         </div>
+                        <div class="field field--wide">
+                            <label asp-for="Input.Tags"></label>
+                            <textarea asp-for="Input.Tags" rows="6" class="code-input" spellcheck="false" autocomplete="off"
+                                      placeholder="One EPC per line, e.g. E28011606000020A1B2C3D4E" data-receive-tags
+                                      autofocus="@(Model.Selected is not null)"></textarea>
+                            <div class="receive-rfid">
+                                <button type="button" class="secondary-button" data-simulate-tags>Add 3 test tags</button>
+                                <span data-tag-count role="status">0 tags</span>
+                                <small>Click the box, then scan each unit. The RFID reader (keyboard mode) types one tag per line.</small>
+                            </div>
+                            <span asp-validation-for="Input.Tags" class="field-error"></span>
+                        </div>
                         <div class="field">
-                            <label asp-for="Input.Quantity"></label><span class="required-mark" aria-hidden="true">*</span>
-                            <input asp-for="Input.Quantity" type="number" min="1" max="9999" placeholder="24" autofocus="@(Model.Selected is not null)" />
+                            <label asp-for="Input.Quantity"></label>
+                            <input asp-for="Input.Quantity" type="number" min="0" max="9999" placeholder="0" />
                             <span asp-validation-for="Input.Quantity" class="field-error"></span>
                         </div>
                         <div class="field">
@@ -101,6 +113,21 @@ else
                     <div class="panel__heading"><h2>@product.Name</h2></div>
                     <p class="stock-summary"><span>@product.QuantityInStock</span> in stock</p>
                     <p class="products-count">
+                        @Model.TaggedInStock with an RFID tag · @Math.Max(0, product.QuantityInStock - Model.TaggedInStock) without
+                    </p>
+                    @if (Model.TaggedItems.Count > 0)
+                    {
+                        <details>
+                            <summary>Tagged items in stock@(Model.TaggedInStock > Model.TaggedItems.Count ? $" (latest {Model.TaggedItems.Count})" : "")</summary>
+                            <ul class="history-list">
+                                @foreach (var item in Model.TaggedItems)
+                                {
+                                    <li><code class="epc">@item.Epc</code></li>
+                                }
+                            </ul>
+                        </details>
+                    }
+                    <p class="products-count">
                         @Model.History.Count delivery(ies) · @Model.History.Sum(r => r.Quantity) unit(s) received in total
                     </p>
                     @if (Model.History.Count == 0)
@@ -115,12 +142,13 @@ else
                                     <strong>+@reception.Quantity</strong>
                                     <span>@reception.ReceivedOn.ToString("yyyy-MM-dd")</span>
                                 </div>
+                                @if (reception.Epcs.Count > 0) { <small>@reception.Epcs.Count tagged · @(reception.Quantity - reception.Epcs.Count) untagged</small> }
                                 @if (reception.ExpiresOn is { } expires) { <small>Expires @expires.ToString("yyyy-MM-dd")</small> }
                                 @if (reception.Note is not null) { <small>@reception.Note</small> }
                                 <details class="confirm-delete">
                                     <summary>Undo</summary>
                                     <div class="confirm-delete__box">
-                                        <p>Remove this delivery and take @reception.Quantity off the stock?</p>
+                                        <p>Remove this delivery and take @reception.Quantity off the stock?@(reception.Epcs.Count > 0 ? $" Its {reception.Epcs.Count} tag(s) will be unregistered." : "")</p>
                                         <form method="post" asp-page-handler="Undo" asp-route-receptionId="@reception.Id" asp-route-productId="@product.Id">
                                             <button type="submit" class="danger-button">Yes, remove</button>
                                         </form>

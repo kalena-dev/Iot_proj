@@ -14,8 +14,13 @@ public sealed class Reception
     [BsonRepresentation(BsonType.ObjectId)]
     public required string ProductId { get; set; }
 
+    // Total units added to stock: the new tags below plus any untagged units.
     [BsonElement("quantity")]
     public int Quantity { get; set; }
+
+    // EPCs of the tagged units this delivery registered. Empty for untagged deliveries.
+    [BsonElement("epcs")]
+    public List<string> Epcs { get; set; } = [];
 
     // Calendar date only, stored as midnight UTC.
     [BsonElement("receivedOn")]
