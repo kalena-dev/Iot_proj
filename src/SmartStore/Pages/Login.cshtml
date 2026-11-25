@@ -1,0 +1,22 @@
+@page
+@model LoginModel
+@{
+    ViewData["Title"] = "Sign in";
+}
+
+<section class="panel form-panel account-panel">
+    <h1>Sign in</h1>
+    <p>Use your Northstar account to check out and view your purchases.</p>
+    <form method="post" class="account-form">
+        <input type="hidden" asp-for="ReturnUrl" />
+        <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
+        <label asp-for="Email"></label>
+        <input asp-for="Email" type="email" autocomplete="username" maxlength="254" required />
+        <span asp-validation-for="Email" class="field-error"></span>
+        <label asp-for="Password"></label>
+        <input asp-for="Password" type="password" autocomplete="current-password" maxlength="128" required />
+        <span asp-validation-for="Password" class="field-error"></span>
+        <button type="submit" class="primary-button">Sign in</button>
+    </form>
+    <p>New to Northstar? <a asp-page="/Register">Create an account</a></p>
+</section>

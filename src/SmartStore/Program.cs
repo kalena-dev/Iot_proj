@@ -1,3 +1,7 @@
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -10,7 +14,38 @@ DotEnvLoader.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddRazorPages();
+builder.Services.AddRazorPages(options =>
+{
+    options.Conventions.AuthorizeFolder("/");
+    foreach (var page in new[] { "/Index", "/Management", "/Records", "/Refrigerators", "/Sensor" })
+        options.Conventions.AuthorizePage(page, "Staff");
+    options.Conventions.AuthorizeFolder("/Products", "Staff");
+    foreach (var page in new[] { "/Login", "/Register", "/Error" })
+        options.Conventions.AllowAnonymousToPage(page);
+});
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
+{
+    options.LoginPath = "/Login";
+    options.AccessDeniedPath = "/Profile";
+    options.Cookie.Name = "Northstar.Account";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+});
+builder.Services.AddAuthorization(options => options.AddPolicy("Staff",
+    policy => policy.RequireAuthenticatedUser().RequireAssertion(context =>
+        StoreAccounts.IsStaff(context.User, builder.Configuration))));
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("Account", context => HttpMethods.IsPost(context.Request.Method)
+        ? RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 8, Window = TimeSpan.FromMinutes(1) })
+        : RateLimitPartition.GetNoLimiter("read"));
+});
+builder.Services.AddSingleton<IPasswordHasher<StoreAccount>, PasswordHasher<StoreAccount>>();
+builder.Services.AddSingleton<StoreAccounts>();
 builder.Services.AddHttpClient("Msp01", client => client.Timeout = TimeSpan.FromSeconds(4));
 builder.Services.AddOptions<RfidOptions>()
     .Bind(builder.Configuration.GetSection("Rfid"))
@@ -86,6 +121,14 @@ if (builder.Configuration.GetValue<bool>("Security:UseHttpsRedirection"))
 
 app.UseStaticFiles();
 app.UseRouting();
+app.UseRateLimiter();
+app.UseAuthentication();
+app.Use(async (context, next) =>
+{
+    if (context.User.Identity?.IsAuthenticated == true)
+        context.Response.Headers.CacheControl = "no-store";
+    await next(context);
+});
 app.UseAuthorization();
 app.MapRazorPages();
 app.MapRfid();

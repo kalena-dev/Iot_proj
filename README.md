@@ -14,7 +14,13 @@ New components: `iot-server/` (TypeScript MQTT/MongoDB/SMTP/IMAP), `firmware/Fri
 
 The inventory, checkout/loyalty, and RFID simulation branches are integrated. `/Products` registers products and receives deliveries; `/Checkout` sells that same MongoDB-backed stock using UPC or EPC codes. `/Management` shows the shared inventory and recent checkout records. See [the inventory and checkout contract](docs/PHASE3-inventory.md).
 
-Approved purchases save an itemized receipt and award registered customers one loyalty point per whole dollar. Declined attempts are recorded without changing stock or points. Receipt lookup and purchase history are available inline; email delivery uses the existing optional SMTP settings. This remains an unsecured classroom simulation, not a real payment system.
+Approved purchases save an itemized receipt and award the signed-in customer one loyalty point per whole dollar. Declined attempts are recorded without changing stock or points. Checkout payments are simulated.
+
+## Customer and staff accounts
+
+1. Configure SMTP in the local `.env` with `EMAIL_ENABLED=true`. For Gmail, use `smtp.gmail.com` on port `587` with a Gmail app password. The same sender delivers registration codes and receipts.
+2. To enable staff access, set `AUTH_ADMIN_EMAIL` to the staff member's email and restart SmartStore. Register that email through **Create account** and complete email verification. The verified account can open Management and the other staff pages.
+3. Customers create and verify their accounts the same way. Use the email from previous checkouts to see existing loyalty points and purchases. **My account** shows the current balance and up to 100 recent checkouts. Self-checkout sends receipts to the signed-in account's email.
 
 
 ## Phase 1 architecture decisions

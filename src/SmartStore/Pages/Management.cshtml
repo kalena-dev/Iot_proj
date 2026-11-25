@@ -6,6 +6,7 @@
     var currency = CultureInfo.GetCultureInfo("en-CA");
     var unitsInStock = Model.Products.Sum(product => (long)product.Stock);
     var revenue = Model.Sales.Where(sale => sale.PaymentStatus == "approved").Sum(sale => sale.Total);
+    var checkoutPages = Model.Sales.Chunk(4).ToArray();
 }
 <link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
 
@@ -87,7 +88,7 @@
         }
     </section>
 
-    <section class="panel products-panel" aria-labelledby="sales-heading">
+    <section class="panel products-panel" aria-labelledby="sales-heading" data-checkout-pages>
         <div class="panel__heading">
             <h2 id="sales-heading">Recent checkouts</h2>
             @if (Model.Sales.Count > 0)
@@ -97,25 +98,40 @@
         </div>
         @if (Model.Sales.Count > 0)
         {
-            <ul class="management-sales">
-                @foreach (var sale in Model.Sales)
+            <div id="recent-checkout-pages">
+                @for (var pageIndex = 0; pageIndex < checkoutPages.Length; pageIndex++)
                 {
-                    <li>
-                        <div class="management-sale-heading">
-                            <time datetime="@sale.CreatedAtUtc.ToString("O")">@sale.CreatedAtUtc.ToLocalTime().ToString("g")</time>
-                            <strong>@sale.Total.ToString("C", currency)</strong>
-                        </div>
-                        <p>@string.Join(", ", sale.Items.Select(item => $"{item.Quantity}× {item.Name}"))</p>
-                        <div class="management-sale-actions">
-                            <span class="stock @(sale.PaymentStatus == "approved" ? "stock--ok" : "stock--out")">@sale.PaymentStatus</span>
-                            @if (sale.PaymentStatus == "approved")
-                            {
-                                <a asp-page="/Receipt" asp-route-id="@sale.Id">View receipt</a>
-                            }
-                        </div>
-                    </li>
+                    <ul class="management-sales" data-checkout-page hidden="@(pageIndex > 0)">
+                        @foreach (var sale in checkoutPages[pageIndex])
+                        {
+                            <li>
+                                <div class="management-sale-heading">
+                                    <time datetime="@sale.CreatedAtUtc.ToString("O")">@sale.CreatedAtUtc.ToLocalTime().ToString("g")</time>
+                                    <strong>@sale.Total.ToString("C", currency)</strong>
+                                </div>
+                                <p>@string.Join(", ", sale.Items.Select(item => $"{item.Quantity}× {item.Name}"))</p>
+                                <div class="management-sale-actions">
+                                    <span class="stock @(sale.PaymentStatus == "approved" ? "stock--ok" : "stock--out")">@sale.PaymentStatus</span>
+                                    @if (sale.PaymentStatus == "approved")
+                                    {
+                                        <a asp-page="/Receipt" asp-route-id="@sale.Id">View receipt</a>
+                                    }
+                                </div>
+                            </li>
+                        }
+                    </ul>
                 }
-            </ul>
+            </div>
+            @if (checkoutPages.Length > 1)
+            {
+                <nav class="management-pagination" aria-label="Recent checkout pages" data-checkout-pagination hidden>
+                    <div class="checkout-pagination">
+                        <span data-checkout-page-label aria-live="polite">Page 1 of @checkoutPages.Length</span>
+                        <button type="button" data-checkout-prev aria-controls="recent-checkout-pages" aria-label="Previous checkout page" disabled>‹</button>
+                        <button type="button" data-checkout-next aria-controls="recent-checkout-pages" aria-label="Next checkout page">›</button>
+                    </div>
+                </nav>
+            }
         }
         else
         {

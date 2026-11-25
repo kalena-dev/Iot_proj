@@ -6,8 +6,10 @@ using SmartStore.Data;
 
 namespace SmartStore.Pages;
 
-public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailService, IStatusIndicator indicator, ILogger<CheckoutModel> logger, RfidCheckout rfid, IProductRepository products) : PageModel
+public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailService, IStatusIndicator indicator, ILogger<CheckoutModel> logger, RfidCheckout rfid, IProductRepository products, IConfiguration configuration) : PageModel
 {
+    public string? AccountEmail => StoreAccounts.EmailOf(User);
+    public bool CanAssignCodes => StoreAccounts.IsStaff(User, configuration);
     public bool SimulationMode => rfid.IsSimulation;
     public string RfidSession { get; private set; } = "";
 
@@ -38,6 +40,7 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
 
     public async Task<IActionResult> OnPostAssignCodeAsync(string? code, string? upc, CancellationToken token)
     {
+        if (!CanAssignCodes) return StatusCode(StatusCodes.Status403Forbidden);
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(upc)) return BadRequest();
         try { await products.AssignCodeAsync(code, upc, token); }
         catch (DuplicateProductCodeException) { return StatusCode(StatusCodes.Status409Conflict); }
@@ -54,10 +57,12 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
     }
 
     public IReadOnlyList<DemoProduct> Products { get; private set; } = [];
+    public IReadOnlyList<LoyaltyCoupon> Coupons { get; private set; } = [];
     public string? DatabaseWarning { get; private set; }
+    public string? CouponWarning { get; private set; }
     [BindProperty] public string Cart { get; set; } = "{}";
+    [BindProperty] public string? CouponId { get; set; }
     [BindProperty] public string PaymentResult { get; set; } = "approve";
-    [BindProperty] public string CustomerEmail { get; set; } = "";
     [TempData] public string? ReceiptId { get; set; }
     [TempData] public string? Message { get; set; }
     [TempData] public string? MessageKind { get; set; }
@@ -70,33 +75,30 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
             logger.LogWarning(exception, "Cannot load checkout inventory.");
             DatabaseWarning = "Inventory unavailable. Check the MongoDB connection before checking out.";
         }
+        if (AccountEmail is { } email)
+        {
+            try { Coupons = await store.GetCouponsAsync(email, cancellationToken); }
+            catch (Exception exception) when (exception is MongoDB.Driver.MongoException or TimeoutException)
+            {
+                logger.LogWarning(exception, "Cannot load checkout coupons.");
+                CouponWarning = "Coupons are temporarily unavailable.";
+            }
+        }
         PairReader();
     }
 
-    // Classroom-only inline lookup endpoints; require authentication before production use.
     public async Task<IActionResult> OnGetReceiptAsync(string id, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(id) || id.Length > 40) return BadRequest();
         var sale = await store.FindSaleAsync(id, cancellationToken);
-        if (sale is null || sale.PaymentStatus != "approved") return NotFound();
+        if (sale is null || sale.PaymentStatus != "approved" || AccountEmail is not { } email
+            || !string.Equals(sale.CustomerEmail, email, StringComparison.OrdinalIgnoreCase)) return NotFound();
         return new JsonResult(new { receipt = emailService.FormatReceipt(sale) });
-    }
-
-    public async Task<IActionResult> OnGetHistoryAsync(string email, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(email) || email.Length > 254 ||
-            !System.Net.Mail.MailAddress.TryCreate(email, out var address) ||
-            !string.Equals(address.Address, email, StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { error = "Enter a valid customer email." });
-        var sales = await store.CustomerHistoryAsync(email.Trim(), cancellationToken);
-        return new JsonResult(sales.Select(s => new {
-            id = s.Id, date = s.CreatedAtUtc, status = s.PaymentStatus,
-            total = s.Total, points = s.PointsEarned
-        }));
     }
 
     public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
     {
+        if (AccountEmail is not { } email) return Challenge();
         DemoSale sale;
         try
         {
@@ -104,7 +106,7 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
             if (Cart.Length > 4000) throw new InvalidOperationException("Cart is too large.");
             var items = JsonSerializer.Deserialize<Dictionary<string, int>>(Cart)
                 ?? throw new InvalidOperationException("Add an item first.");
-            sale = await store.CheckoutAsync(items, PaymentResult, CustomerEmail, cancellationToken, emailService.Sender);
+            sale = await store.CheckoutAsync(items, PaymentResult, email, cancellationToken, emailService.Sender, CouponId);
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
@@ -153,9 +155,8 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
             }
         }
         Message = $"Payment approved! Receipt {sale.Id[..8]} — ${sale.Total:F2}. " +
-            (sale.CustomerEmail is null ? "Guest checkout · no loyalty points earned." :
-                 $"Earned {sale.PointsEarned} points. Balance: {sale.PointsBalanceAfter}. " +
-                (emailSent ? "Receipt emailed." : "Email not sent; receipt is available below."));
+            $"Earned {sale.PointsEarned} points. Balance: {sale.PointsBalanceAfter}. " +
+            (emailSent ? "Receipt emailed." : "Email not sent. View your receipt below.");
         return RedirectToPage();
     }
 

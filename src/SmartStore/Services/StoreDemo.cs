@@ -10,6 +10,12 @@ namespace SmartStore.Services;
 
 public sealed record DemoProduct(string Code, string Name, decimal Price, int Stock, string Epc);
 public sealed record DemoSaleLine(string Code, string Name, decimal Price, int Quantity);
+public sealed record LoyaltyReward(int Points, int Percent);
+public sealed record LoyaltyCoupon([property: BsonId] string Id, string Email, int Percent)
+{
+    public string? SaleId { get; init; }
+}
+
 [BsonIgnoreExtraElements]
 public sealed class DemoSale
 {
@@ -17,6 +23,8 @@ public sealed class DemoSale
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public List<DemoSaleLine> Items { get; set; } = [];
     public decimal Total { get; set; }
+    public int CouponPercent { get; set; }
+    public decimal CouponDiscount { get; set; }
     public string PaymentStatus { get; set; } = "approved";
     public string? CustomerId { get; set; }
     public string? CustomerEmail { get; set; }
@@ -28,6 +36,9 @@ public sealed class DemoSale
 // Checkout and product management share the persistent inventory repository.
 public sealed class StoreDemo
 {
+    public static IReadOnlyList<LoyaltyReward> Rewards { get; } =
+        Array.AsReadOnly(new LoyaltyReward[] { new(250, 10), new(500, 25) });
+
     private readonly IProductRepository _products;
     private readonly IMongoClient _client;
     private readonly ILogger<StoreDemo> _logger;
@@ -35,6 +46,7 @@ public sealed class StoreDemo
     private readonly IMongoCollection<Customer> _customers;
     private readonly MongoCustomerRepository _registry;
     private readonly IMongoCollection<EmailLog> _emails;
+    private readonly IMongoCollection<LoyaltyCoupon> _coupons;
 
     public StoreDemo(IMongoClient client, IOptions<MongoDbOptions> options,
         IProductRepository products, MongoCustomerRepository registry, ILogger<StoreDemo> logger)
@@ -47,6 +59,7 @@ public sealed class StoreDemo
         _emails = db.GetCollection<EmailLog>("email_log");
         _sales = db.GetCollection<DemoSale>("demo_sales");
         _customers = db.GetCollection<Customer>(options.Value.CustomersCollectionName);
+        _coupons = db.GetCollection<LoyaltyCoupon>("loyalty_coupons");
     }
 
     public async Task<DemoSale?> FindSaleAsync(string id, CancellationToken cancellationToken) =>
@@ -61,7 +74,8 @@ public sealed class StoreDemo
     }
 
     public async Task<DemoSale> CheckoutAsync(Dictionary<string, int> cart, string paymentResult,
-        string? customerEmail, CancellationToken cancellationToken, string? receiptSender = null)
+        string? customerEmail, CancellationToken cancellationToken, string? receiptSender = null,
+        string? couponId = null)
     {
         if (cart.Count is < 1 or > 20 || cart.Any(x => x.Value is < 1 or > 50))
             throw new InvalidOperationException("Add 1–20 different items with quantities between 1 and 50.");
@@ -111,8 +125,27 @@ public sealed class StoreDemo
                     return new DemoSaleLine(product.Upc, product.Name, product.Price, item.Value);
                 }).ToList();
 
-                var total = lines.Sum(x => x.Price * x.Quantity);
                 var approved = paymentResult == "approve";
+                LoyaltyCoupon? coupon = null;
+                if (!string.IsNullOrEmpty(couponId))
+                {
+                    if (normalizedEmail is null || !Guid.TryParseExact(couponId, "N", out _))
+                        throw new InvalidOperationException("Choose a coupon from your account.");
+
+                    var available = AvailableCoupons(normalizedEmail) &
+                        Builders<LoyaltyCoupon>.Filter.Eq(c => c.Id, couponId);
+                    coupon = approved
+                        ? await _coupons.FindOneAndUpdateAsync(session, available,
+                            Builders<LoyaltyCoupon>.Update.Set(c => c.SaleId, saleId),
+                            cancellationToken: token)
+                        : await _coupons.Find(session, available).FirstOrDefaultAsync(token);
+                    if (coupon is null)
+                        throw new InvalidOperationException("That coupon is no longer available for this account.");
+                }
+
+                var subtotal = lines.Sum(x => x.Price * x.Quantity);
+                var discount = decimal.Round(subtotal * (coupon?.Percent ?? 0) / 100, 2, MidpointRounding.AwayFromZero);
+                var total = subtotal - discount;
                 var points = approved && normalizedEmail is not null ? checked((int)decimal.Floor(total)) : 0;
                 Customer? customer = null;
                 if (normalizedEmail is not null)
@@ -126,6 +159,7 @@ public sealed class StoreDemo
                 {
                     Id = saleId, CreatedAtUtc = createdAtUtc,
                     Items = lines, Total = total, PaymentStatus = approved ? "approved" : "declined",
+                    CouponPercent = coupon?.Percent ?? 0, CouponDiscount = discount,
                     CustomerId = customer?.Id, CustomerEmail = normalizedEmail,
                     PointsEarned = points, PointsBalanceAfter = customer?.TotalPoints,
                     EmailStatus = approved && normalizedEmail is not null ? "pending" : "not_requested"
@@ -168,6 +202,34 @@ public sealed class StoreDemo
     public Task<List<DemoSale>> CustomerHistoryAsync(string email, CancellationToken cancellationToken) =>
         _sales.Find(s => s.CustomerEmail == email.Trim().ToLowerInvariant())
             .SortByDescending(s => s.CreatedAtUtc).Limit(100).ToListAsync(cancellationToken);
+
+    public Task<int> CustomerPointsAsync(string email, CancellationToken cancellationToken) =>
+        _customers.Find(customer => customer.Email == email, new FindOptions { Collation = EmailCollation })
+            .Project(customer => customer.TotalPoints).FirstOrDefaultAsync(cancellationToken);
+
+    private static FilterDefinition<LoyaltyCoupon> AvailableCoupons(string email) =>
+        Builders<LoyaltyCoupon>.Filter.Where(c => c.Email == email && c.SaleId == null);
+
+    public Task<List<LoyaltyCoupon>> GetCouponsAsync(string email, CancellationToken token) =>
+        _coupons.Find(AvailableCoupons(email)).SortByDescending(c => c.Percent).ThenBy(c => c.Id).ToListAsync(token);
+
+    public async Task RedeemCouponAsync(string email, int percent, CancellationToken token)
+    {
+        var reward = Rewards.SingleOrDefault(r => r.Percent == percent)
+            ?? throw new InvalidOperationException("Choose an available loyalty reward.");
+        var coupon = new LoyaltyCoupon(Guid.NewGuid().ToString("N"), email, reward.Percent);
+        await MongoTransaction.RunAsync(_client, async (session, ct) =>
+        {
+            var debit = await _customers.UpdateOneAsync(session,
+                c => c.Email == email && c.TotalPoints >= reward.Points,
+                Builders<Customer>.Update.Inc(c => c.TotalPoints, -reward.Points),
+                new UpdateOptions { Collation = EmailCollation }, ct);
+            if (debit.ModifiedCount != 1)
+                throw new InvalidOperationException($"You need {reward.Points} loyalty points for this coupon.");
+            await _coupons.InsertOneAsync(session, coupon, cancellationToken: ct);
+            return coupon;
+        }, "Coupon redemption", coupon.Id, token);
+    }
 
     private static readonly Collation EmailCollation = new("en", strength: CollationStrength.Secondary);
 

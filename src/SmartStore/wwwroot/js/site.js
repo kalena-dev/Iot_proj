@@ -4,6 +4,41 @@
     closeButton?.addEventListener("click", () => notice.remove());
   });
 
+  const checkoutPanel = document.querySelector("[data-checkout-pages]");
+  const checkoutPagination = checkoutPanel?.querySelector("[data-checkout-pagination]");
+  if (checkoutPagination) {
+    const pages = Array.from(checkoutPanel.querySelectorAll("[data-checkout-page]"));
+    const label = checkoutPagination.querySelector("[data-checkout-page-label]");
+    const previous = checkoutPagination.querySelector("[data-checkout-prev]");
+    const next = checkoutPagination.querySelector("[data-checkout-next]");
+    let page = 0;
+
+    function goToPage(index) {
+      pages[page].hidden = true;
+      page = index;
+      pages[page].hidden = false;
+      label.textContent = `Page ${page + 1} of ${pages.length}`;
+      previous.disabled = page === 0;
+      next.disabled = page === pages.length - 1;
+    }
+
+    previous.addEventListener("click", () => goToPage(page - 1));
+    next.addEventListener("click", () => goToPage(page + 1));
+    checkoutPagination.hidden = false;
+  }
+
+  const accountProfile = document.querySelector(".account-profile");
+  if (accountProfile) {
+    document.addEventListener("click", (event) => {
+      if (!accountProfile.contains(event.target)) accountProfile.open = false;
+    });
+    accountProfile.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !accountProfile.open) return;
+      accountProfile.open = false;
+      accountProfile.querySelector("summary").focus();
+    });
+  }
+
   const form = document.querySelector("#customer-form");
   const submitButton = form?.querySelector("button[type='submit']");
 

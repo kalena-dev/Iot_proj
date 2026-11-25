@@ -1,0 +1,95 @@
+@page
+@model ProfileModel
+@using System.Globalization
+@using SmartStore.Services
+@{
+    ViewData["Title"] = "My account";
+    var currency = CultureInfo.GetCultureInfo("en-CA");
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero management-hero">
+    <div class="hero__copy">
+        <h1>My account</h1>
+        <p class="account-email">@Model.Email</p>
+    </div>
+    <div class="products-actions">
+        <a asp-page="/Checkout" class="primary-button">Go to self-checkout</a>
+    </div>
+</section>
+
+<dl class="management-summary">
+    <div class="panel management-stat">
+        <dt>Loyalty points</dt>
+        <dd>@Model.Points.ToString("N0")</dd>
+        <details open="@(Model.CouponError ? "open" : null)">
+            <summary>Get coupon</summary>
+            <form method="post" asp-page-handler="RedeemCoupon">
+                @foreach (var reward in StoreDemo.Rewards)
+                {
+                    <button class="checkout-small-button" type="submit" name="percent" value="@reward.Percent"
+                            disabled="@(Model.Points < reward.Points)">@reward.Percent% off · @reward.Points points</button>
+                }
+            </form>
+        </details>
+        <p>Available coupons: @Model.CouponCount</p>
+        @if (Model.CouponMessage is { } message)
+        {
+            <p role="status" class="@(Model.CouponError ? "field-error" : null)">@message</p>
+        }
+    </div>
+</dl>
+
+<section class="panel products-panel" aria-labelledby="purchase-history-heading">
+    <div class="panel__heading">
+        <h2 id="purchase-history-heading">Purchase history</h2>
+        @if (Model.Sales.Count == 100)
+        {
+            <span class="management-muted">Latest 100 checkouts</span>
+        }
+    </div>
+    @if (Model.Sales.Count == 0)
+    {
+        <p class="management-empty">Your checkouts will appear here.</p>
+    }
+    else
+    {
+        <div class="table-scroll" role="region" aria-labelledby="purchase-history-heading" tabindex="0">
+            <table class="products-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Date</th>
+                        <th scope="col">Items</th>
+                        <th scope="col">Payment</th>
+                        <th scope="col" class="num">Total</th>
+                        <th scope="col" class="num">Points</th>
+                        <th scope="col">Receipt</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var sale in Model.Sales)
+                    {
+                        var approved = sale.PaymentStatus == "approved";
+                        <tr>
+                            <td><time datetime="@sale.CreatedAtUtc.ToString("O")">@sale.CreatedAtUtc.ToLocalTime().ToString("g")</time></td>
+                            <td>@string.Join(", ", sale.Items.Select(item => $"{item.Quantity}× {item.Name}"))</td>
+                            <td><span class="stock @(approved ? "stock--ok" : "stock--out")">@(approved ? "Approved" : "Declined")</span></td>
+                            <td class="num">@sale.Total.ToString("C", currency)</td>
+                            <td class="num">@sale.PointsEarned</td>
+                            <td>
+                                @if (approved)
+                                {
+                                    <a asp-page="/Receipt" asp-route-id="@sale.Id">View receipt</a>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>

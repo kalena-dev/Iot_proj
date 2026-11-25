@@ -895,7 +895,6 @@ select:focus-visible {
 .demo-sale { display: block; }
 .demo-sale div { margin-top: 5px; color: var(--muted); }
 .demo-total { font-size: 1.35rem; margin: 24px 0; }
-#checkout-form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 @media (max-width: 960px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
@@ -1337,6 +1336,15 @@ select:focus-visible {
   list-style: none;
 }
 
+.management-pagination {
+  padding-top: 14px;
+  border-top: 1px solid var(--soft-line);
+}
+
+.management-pagination .checkout-pagination {
+  justify-content: flex-end;
+}
+
 .management-sales li {
   padding: 14px 0;
   font-size: 0.84rem;
@@ -1376,4 +1384,144 @@ select:focus-visible {
   font-size: 0.8rem;
   font-weight: 600;
   text-underline-offset: 0.2em;
+}
+
+.account-panel {
+  max-width: 470px;
+  margin: 0 auto;
+}
+
+.account-panel h1 {
+  margin-top: 0;
+}
+
+.account-panel > p, .account-hint {
+  color: var(--muted);
+}
+
+.account-form {
+  display: grid;
+  gap: 8px;
+  margin: 22px 0 16px;
+}
+
+.account-form label {
+  font-weight: 600;
+}
+
+.account-form input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: light-dark(#fbfcfc, var(--field));
+  color: var(--ink);
+}
+
+.account-hint {
+  font-size: 0.82rem;
+}
+
+.account-email {
+  overflow-wrap: anywhere;
+}
+
+.account-text-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.demo-nav form {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.site-header:has(.account-profile[open]) {
+  position: relative;
+  z-index: 10;
+}
+
+.account-profile {
+  position: relative;
+}
+
+.account-profile summary {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--navy);
+  list-style: none;
+  cursor: pointer;
+}
+
+.account-profile summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-profile summary svg {
+  width: 22px;
+}
+
+.account-profile[open] summary, .account-profile summary:hover {
+  background: var(--blue-soft);
+}
+
+.account-profile__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(16rem, calc(100vw - 26px));
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  font-size: 0.86rem;
+  letter-spacing: normal;
+}
+
+.account-profile__identity {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 4px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.account-profile__identity span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.account-profile__menu a, .account-profile__menu button {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--navy);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account-profile__menu a:hover, .account-profile__menu button:hover {
+  background: var(--blue-soft);
+}
+
+a.checkout-action {
+  text-decoration: none;
 }
