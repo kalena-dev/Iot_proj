@@ -13,23 +13,6 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
     public bool SimulationMode => rfid.IsSimulation;
     public string RfidSession { get; private set; } = "";
 
-    private void PairReader()
-    {
-        Response.Headers.CacheControl = "no-store";
-        if (!rfid.IsReader) return;
-        RfidSession = rfid.Open();
-
-        // Optional single-till Pi demo: publish the local page's pairing to its reader.
-        var pairingFile = Environment.GetEnvironmentVariable("RFID_LOCAL_PAIRING_FILE");
-        var peer = HttpContext.Connection.RemoteIpAddress;
-        if (!string.IsNullOrEmpty(pairingFile) && peer is not null && System.Net.IPAddress.IsLoopback(peer))
-        {
-            var temporaryFile = pairingFile + "." + Guid.NewGuid().ToString("N");
-            System.IO.File.WriteAllText(temporaryFile, RfidSession);
-            System.IO.File.Move(temporaryFile, pairingFile, overwrite: true);
-        }
-    }
-
     public async Task<IActionResult> OnGetCodeAsync(string? code, CancellationToken token)
     {
         Response.Headers.CacheControl = "no-store";
@@ -84,7 +67,7 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
                 CouponWarning = "Coupons are temporarily unavailable.";
             }
         }
-        PairReader();
+        RfidSession = rfid.PairLocal(HttpContext);
     }
 
     public async Task<IActionResult> OnGetReceiptAsync(string id, CancellationToken cancellationToken)

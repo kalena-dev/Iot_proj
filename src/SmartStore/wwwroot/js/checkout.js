@@ -291,12 +291,13 @@
       }
       if (!response.ok) throw new Error('Reader bridge unavailable');
       const tags = await response.json();
-      if (tags.length) processRfidScan(tags);
-      else rfidStatus.textContent = 'Waiting for RFID events. No tags received.';
+      const newTags = tags.filter(tag => !scannedTags.has(tag.epc));
+      if (newTags.length) processRfidScan(newTags);
+      else if (!tags.length) rfidStatus.textContent = 'Waiting for RFID events. No tags received.';
     } catch {
       rfidStatus.textContent = 'RFID bridge unavailable. Manual checkout is still available.';
     }
-    window.setTimeout(pollReader, 1500);
+    window.setTimeout(pollReader, 350);
   }
   if (scanner.dataset.mode === 'reader' && scanner.dataset.session) pollReader();
 
