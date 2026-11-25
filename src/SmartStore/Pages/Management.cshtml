@@ -122,9 +122,16 @@
                     </ul>
                 }
             </div>
+        }
+        else
+        {
+            <p class="management-empty">@(Model.SalesAvailable ? "No checkout activity yet." : "Recent checkouts are currently unavailable.")</p>
+        }
+        <div class="management-checkout-footer">
+            <a class="secondary-button" asp-page="/Records">View all checkouts</a>
             @if (checkoutPages.Length > 1)
             {
-                <nav class="management-pagination" aria-label="Recent checkout pages" data-checkout-pagination hidden>
+                <nav aria-label="Recent checkout pages" data-checkout-pagination hidden>
                     <div class="checkout-pagination">
                         <span data-checkout-page-label aria-live="polite">Page 1 of @checkoutPages.Length</span>
                         <button type="button" data-checkout-prev aria-controls="recent-checkout-pages" aria-label="Previous checkout page" disabled>‹</button>
@@ -132,10 +139,6 @@
                     </div>
                 </nav>
             }
-        }
-        else
-        {
-            <p class="management-empty">@(Model.SalesAvailable ? "No checkout activity yet." : "Recent checkouts are currently unavailable.")</p>
-        }
+        </div>
     </section>
 </div>

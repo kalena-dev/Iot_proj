@@ -1336,13 +1336,18 @@ select:focus-visible {
   list-style: none;
 }
 
-.management-pagination {
+.management-checkout-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding-top: 14px;
   border-top: 1px solid var(--soft-line);
 }
 
-.management-pagination .checkout-pagination {
-  justify-content: flex-end;
+.management-checkout-footer nav {
+  margin-left: auto;
 }
 
 .management-sales li {
