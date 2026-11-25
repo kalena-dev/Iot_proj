@@ -1,34 +1,125 @@
 @page
 @model ManagementModel
+@using System.Globalization
 @{
     ViewData["Title"] = "Store management";
-    var revenue = Model.Sales.Where(s => s.PaymentStatus == "approved").Sum(s => s.Total);
+    var currency = CultureInfo.GetCultureInfo("en-CA");
+    var unitsInStock = Model.Products.Sum(product => (long)product.Stock);
+    var revenue = Model.Sales.Where(sale => sale.PaymentStatus == "approved").Sum(sale => sale.Total);
 }
-<section class="hero"><div class="hero__copy"><span class="eyebrow">Management side · classroom demo</span>
-    <h1>Store dashboard</h1><p>Review persistent inventory and recent sales. Receive deliveries or edit product details in Products.</p>
-</div></section>
-@if (Model.DatabaseWarning is not null) { <div class="notice notice--error" role="alert"><p>@Model.DatabaseWarning</p></div> }
-<div class="workspace">
-<section class="panel form-panel">
-    <div class="panel__heading"><h2>Inventory</h2><a asp-page="/Products/Index">Manage products and deliveries →</a></div>
-    @foreach (var product in Model.Products)
-    {
-        <div class="demo-cart-row"><span><strong>@product.Name</strong> · UPC @product.Code · EPC @product.Epc · $@product.Price.ToString("F2")</span><span>@product.Stock in stock</span></div>
-    }
-    @if (Model.Products.Count == 0) { <p>No inventory to display. Add products and receive stock from Products.</p> }
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero management-hero">
+    <div class="hero__copy">
+        <h1>Store management</h1>
+        <p>Review inventory levels and the latest checkout activity.</p>
+    </div>
+    <nav class="products-actions" aria-label="Management shortcuts">
+        <a class="secondary-button" asp-page="/Records">Transactions</a>
+        <a class="secondary-button" asp-page="/Records" asp-route-viewLog="email">Email log</a>
+        <a class="primary-button" asp-page="/Checkout">Self-checkout</a>
+    </nav>
 </section>
-<aside class="sidebar"><section class="panel status-panel">
-    <div class="panel__heading"><h2>Recent sales</h2></div>
-        <p>Last @Model.Sales.Count sale(s) · @revenue.ToString("C") total shown</p>
-        @foreach (var sale in Model.Sales)
+
+@if (Model.DatabaseWarning is not null)
+{
+    <div class="notice notice--error" role="alert"><p>@Model.DatabaseWarning</p></div>
+}
+
+<dl class="management-summary" aria-label="Store summary">
+    <div class="panel management-stat">
+        <dt>Products</dt>
+        <dd>@(Model.InventoryAvailable ? Model.Products.Count.ToString("N0") : "—")</dd>
+    </div>
+    <div class="panel management-stat">
+        <dt>Units in stock</dt>
+        <dd>@(Model.InventoryAvailable ? unitsInStock.ToString("N0") : "—")</dd>
+    </div>
+    <div class="panel management-stat">
+        <dt>Revenue from recent checkouts</dt>
+        <dd>@(Model.SalesAvailable ? revenue.ToString("C", currency) : "—")</dd>
+    </div>
+</dl>
+
+<div class="workspace">
+    <section class="panel products-panel" aria-labelledby="inventory-heading">
+        <div class="panel__heading">
+            <h2 id="inventory-heading">Inventory</h2>
+            <a class="secondary-button" asp-page="/Products/Index">Manage products</a>
+        </div>
+        @if (Model.Products.Count > 0)
         {
-            <div class="demo-sale"><strong>@sale.CreatedAtUtc.ToLocalTime().ToString("g") · $@sale.Total.ToString("F2") · @sale.PaymentStatus</strong>
-                <div>@string.Join(", ", sale.Items.Select(i => $"{i.Quantity}× {i.Name}"))</div>
-                @if (sale.PaymentStatus == "approved") { <a asp-page="/Receipt" asp-route-id="@sale.Id">View receipt</a> }
+            <div class="table-scroll" role="region" aria-labelledby="inventory-heading" tabindex="0">
+                <table class="products-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Product</th>
+                            <th scope="col">Product codes</th>
+                            <th scope="col" class="num">Price</th>
+                            <th scope="col" class="num">In stock</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var product in Model.Products)
+                        {
+                            var stockClass = product.Stock <= 0 ? "stock--out"
+                                : product.Stock <= SmartStore.Pages.Products.IndexModel.LowStockThreshold ? "stock--low" : "stock--ok";
+                            <tr>
+                                <th scope="row" class="management-product-name">@product.Name</th>
+                                <td class="management-codes">
+                                    <span>UPC <code>@product.Code</code></span>
+                                    @if (!string.IsNullOrWhiteSpace(product.Epc))
+                                    {
+                                        <span>EPC <code>@product.Epc</code></span>
+                                    }
+                                </td>
+                                <td class="num">@product.Price.ToString("C", currency)</td>
+                                <td class="num"><span class="stock @stockClass">@product.Stock</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
         }
-        @if (Model.Sales.Count == 0) { <p>Make a demo purchase to see it here.</p> }
-    <p><a asp-page="/Records">All checkout transactions</a> · <a asp-page="/Records" asp-route-viewLog="email">Email log</a></p>
-    <a asp-page="/Checkout">Go to self-checkout →</a>
-</section></aside>
+        else
+        {
+            <p class="management-empty">@(Model.InventoryAvailable ? "No products in inventory yet." : "Inventory is currently unavailable.")</p>
+        }
+    </section>
+
+    <section class="panel products-panel" aria-labelledby="sales-heading">
+        <div class="panel__heading">
+            <h2 id="sales-heading">Recent checkouts</h2>
+            @if (Model.Sales.Count > 0)
+            {
+                <span class="management-muted">Latest @Model.Sales.Count</span>
+            }
+        </div>
+        @if (Model.Sales.Count > 0)
+        {
+            <ul class="management-sales">
+                @foreach (var sale in Model.Sales)
+                {
+                    <li>
+                        <div class="management-sale-heading">
+                            <time datetime="@sale.CreatedAtUtc.ToString("O")">@sale.CreatedAtUtc.ToLocalTime().ToString("g")</time>
+                            <strong>@sale.Total.ToString("C", currency)</strong>
+                        </div>
+                        <p>@string.Join(", ", sale.Items.Select(item => $"{item.Quantity}× {item.Name}"))</p>
+                        <div class="management-sale-actions">
+                            <span class="stock @(sale.PaymentStatus == "approved" ? "stock--ok" : "stock--out")">@sale.PaymentStatus</span>
+                            @if (sale.PaymentStatus == "approved")
+                            {
+                                <a asp-page="/Receipt" asp-route-id="@sale.Id">View receipt</a>
+                            }
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p class="management-empty">@(Model.SalesAvailable ? "No checkout activity yet." : "Recent checkouts are currently unavailable.")</p>
+        }
+    </section>
 </div>

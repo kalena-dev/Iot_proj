@@ -1284,3 +1284,96 @@ select:focus-visible {
 @media (max-width: 960px) {
   .header-meta .course-code, .header-meta .device-state { display: none; }
 }
+
+.management-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 14px;
+  margin: 0 0 22px;
+}
+
+.management-hero {
+  flex-wrap: wrap;
+  gap: 16px 32px;
+}
+
+.management-stat {
+  padding: 16px 20px;
+}
+
+.management-stat dt,
+.management-muted,
+.management-sale-heading time,
+.management-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.management-stat dd {
+  margin: 5px 0 0;
+  color: var(--navy);
+  font-size: 1.65rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.products-table .management-product-name {
+  color: var(--ink);
+  font-size: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.management-codes span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.management-sales {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.management-sales li {
+  padding: 14px 0;
+  font-size: 0.84rem;
+}
+
+.management-sales li + li {
+  border-top: 1px solid var(--soft-line);
+}
+
+.management-sale-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.management-sales p {
+  margin: 5px 0 7px;
+  overflow-wrap: anywhere;
+}
+
+.management-sales .stock {
+  font-size: 0.74rem;
+  text-transform: capitalize;
+}
+
+.management-sale-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.management-sale-actions a {
+  color: var(--navy);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-underline-offset: 0.2em;
+}

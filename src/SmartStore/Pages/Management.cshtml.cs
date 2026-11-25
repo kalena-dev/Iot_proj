@@ -7,17 +7,27 @@ public sealed class ManagementModel(StoreDemo store, ILogger<ManagementModel> lo
 {
     public IReadOnlyList<DemoProduct> Products { get; private set; } = [];
     public IReadOnlyList<DemoSale> Sales { get; private set; } = [];
+    public bool InventoryAvailable { get; private set; }
+    public bool SalesAvailable { get; private set; }
     public string? DatabaseWarning { get; private set; }
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
-        try { Products = await store.GetProductsAsync(cancellationToken); }
+        try
+        {
+            Products = await store.GetProductsAsync(cancellationToken);
+            InventoryAvailable = true;
+        }
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Cannot load management inventory.");
             DatabaseWarning = "Inventory unavailable. Check the MongoDB connection.";
         }
-        try { Sales = await store.RecentSalesAsync(cancellationToken); }
+        try
+        {
+            Sales = await store.RecentSalesAsync(cancellationToken);
+            SalesAvailable = true;
+        }
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Cannot load recent sales.");
@@ -26,5 +36,4 @@ public sealed class ManagementModel(StoreDemo store, ILogger<ManagementModel> lo
                 : "Inventory and sales unavailable. Check the MongoDB connection.";
         }
     }
-
 }
