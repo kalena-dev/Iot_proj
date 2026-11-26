@@ -17,7 +17,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AuthorizeFolder("/");
-    foreach (var page in new[] { "/Index", "/Management", "/Records", "/Refrigerators", "/Sensor" })
+    foreach (var page in new[] { "/Index", "/Management", "/Reports", "/InventoryReport", "/Records", "/Refrigerators", "/Sensor" })
         options.Conventions.AuthorizePage(page, "Staff");
     options.Conventions.AuthorizeFolder("/Products", "Staff");
     foreach (var page in new[] { "/Login", "/Register", "/Error" })

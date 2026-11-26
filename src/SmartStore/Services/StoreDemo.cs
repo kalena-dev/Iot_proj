@@ -338,6 +338,18 @@ public sealed class StoreDemo
         _sales.Find(FilterDefinition<DemoSale>.Empty).SortByDescending(s => s.CreatedAtUtc).ThenByDescending(s => s.Id)
             .Skip(skip).Limit(count).ToListAsync(token);
 
+    public Task<List<DemoSale>> ApprovedSalesInPeriodAsync(DateTime startUtc, DateTime endUtc, CancellationToken token) =>
+        _sales.Find(sale => sale.PaymentStatus == "approved" &&
+            sale.CreatedAtUtc >= startUtc && sale.CreatedAtUtc < endUtc).ToListAsync(token);
+
+    public async Task<List<string?>> PreviousPurchasersAsync(DateTime beforeUtc, CancellationToken token)
+    {
+        using var customers = await _sales.DistinctAsync(sale => sale.CustomerEmail,
+            sale => sale.PaymentStatus == "approved" && sale.CreatedAtUtc < beforeUtc && sale.CustomerEmail != null,
+            cancellationToken: token);
+        return await customers.ToListAsync(token);
+    }
+
     public Task<List<DemoSale>> RecentSalesAsync(CancellationToken cancellationToken) =>
         _sales.Find(FilterDefinition<DemoSale>.Empty)
             .SortByDescending(s => s.CreatedAtUtc).Limit(20).ToListAsync(cancellationToken);

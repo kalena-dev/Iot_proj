@@ -4,6 +4,8 @@
 @{
     ViewData["Title"] = "Store management";
     var currency = CultureInfo.GetCultureInfo("en-CA");
+    var attention = Model.Products.Where(product => product.Stock <= InventoryReportModel.LowStockThreshold)
+        .OrderBy(product => product.Stock).ThenBy(product => product.Name).Take(4).ToArray();
     var unitsInStock = Model.Products.Sum(product => (long)product.Stock);
     var revenue = Model.Sales.Where(sale => sale.PaymentStatus == "approved").Sum(sale => sale.Total);
     var checkoutPages = Model.Sales.Chunk(4).ToArray();
@@ -16,6 +18,7 @@
         <p>Review inventory levels and the latest checkout activity.</p>
     </div>
     <nav class="products-actions" aria-label="Management shortcuts">
+        <a class="secondary-button" asp-page="/Reports">Reports</a>
         <a class="secondary-button" asp-page="/Records">Transactions</a>
         <a class="secondary-button" asp-page="/Records" asp-route-viewLog="email">Email log</a>
         <a class="primary-button" asp-page="/Checkout">Self-checkout</a>
@@ -29,14 +32,6 @@
 
 <dl class="management-summary" aria-label="Store summary">
     <div class="panel management-stat">
-        <dt>Products</dt>
-        <dd>@(Model.InventoryAvailable ? Model.Products.Count.ToString("N0") : "—")</dd>
-    </div>
-    <div class="panel management-stat">
-        <dt>Units in stock</dt>
-        <dd>@(Model.InventoryAvailable ? unitsInStock.ToString("N0") : "—")</dd>
-    </div>
-    <div class="panel management-stat">
         <dt>Revenue from recent checkouts</dt>
         <dd>@(Model.SalesAvailable ? revenue.ToString("C", currency) : "—")</dd>
     </div>
@@ -46,45 +41,36 @@
     <section class="panel products-panel" aria-labelledby="inventory-heading">
         <div class="panel__heading">
             <h2 id="inventory-heading">Inventory</h2>
-            <a class="secondary-button" asp-page="/Products/Index">Manage products</a>
+            <a class="secondary-button" asp-page="/InventoryReport">View inventory report</a>
         </div>
-        @if (Model.Products.Count > 0)
+        @if (Model.InventoryAvailable)
         {
-            <div class="table-scroll" role="region" aria-labelledby="inventory-heading" tabindex="0">
-                <table class="products-table">
-                    <thead>
-                        <tr>
-                            <th scope="col">Product</th>
-                            <th scope="col">Product codes</th>
-                            <th scope="col" class="num">Price</th>
-                            <th scope="col" class="num">In stock</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var product in Model.Products)
-                        {
-                            var stockClass = product.Stock <= 0 ? "stock--out"
-                                : product.Stock <= SmartStore.Pages.Products.IndexModel.LowStockThreshold ? "stock--low" : "stock--ok";
-                            <tr>
-                                <th scope="row" class="management-product-name">@product.Name</th>
-                                <td class="management-codes">
-                                    <span>UPC <code>@product.Code</code></span>
-                                    @if (!string.IsNullOrWhiteSpace(product.Epc))
-                                    {
-                                        <span>EPC <code>@product.Epc</code></span>
-                                    }
-                                </td>
-                                <td class="num">@product.Price.ToString("C", currency)</td>
-                                <td class="num"><span class="stock @stockClass">@product.Stock</span></td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
+            <dl class="inventory-preview-stats">
+                <div><dt>Products</dt><dd>@Model.Products.Count.ToString("N0")</dd></div>
+                <div><dt>Units in stock</dt><dd>@unitsInStock.ToString("N0")</dd></div>
+                <div><dt>Low stock</dt><dd>@Model.Products.Count(product => product.Stock > 0 && product.Stock <= InventoryReportModel.LowStockThreshold)</dd></div>
+                <div><dt>Out of stock</dt><dd>@Model.Products.Count(product => product.Stock <= 0)</dd></div>
+            </dl>
+            @if (attention.Length > 0)
+            {
+                <ul class="inventory-preview-list" aria-label="Products needing stock">
+                    @foreach (var product in attention)
+                    {
+                        <li>
+                            <span>@product.Name</span>
+                            <span class="stock @InventoryReportModel.StockClass(product.Stock)">@product.Stock in stock</span>
+                        </li>
+                    }
+                </ul>
+            }
+            else
+            {
+                <p class="management-empty">@(Model.Products.Count == 0 ? "No products in inventory yet." : "No products need restocking.")</p>
+            }
         }
         else
         {
-            <p class="management-empty">@(Model.InventoryAvailable ? "No products in inventory yet." : "Inventory is currently unavailable.")</p>
+            <p class="management-empty">Inventory is currently unavailable.</p>
         }
     </section>
 
