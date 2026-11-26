@@ -1,2 +1,91 @@
 @page
 @model PurchaseHistoryModel
+@using System.Globalization
+@{
+    ViewData["Title"] = "Purchase history";
+    var currency = CultureInfo.GetCultureInfo("en-CA");
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero management-hero">
+    <div class="hero__copy"><h1>Purchase history</h1></div>
+    <a class="secondary-button" asp-page="/Profile">Back to my account</a>
+</section>
+<section class="panel products-panel customer-history">
+    <form method="get" class="customer-history-filters">
+        <label>From <input asp-for="From" type="date" /></label>
+        <label>To <input asp-for="To" type="date" /></label>
+        <label>Product name or code <input asp-for="Product" type="search" /></label>
+        <button type="submit" class="primary-button">Apply</button>
+        <a asp-page="/PurchaseHistory">Clear filters</a>
+    </form>
+    <div asp-validation-summary="All" class="field-error"></div>
+    @if (ViewData.ModelState.IsValid)
+    {
+        <p class="customer-spending-total"><strong>@Model.TotalSpent.ToString("C", currency)</strong> spent in this period</p>
+        <partial name="_CustomerReceipts" model="Model.Sales" />
+        @if (Model.PageCount > 1)
+        {
+            <nav class="customer-report-pages" aria-label="Purchase history pages">
+                @if (Model.HistoryPage > 1)
+                {
+                    <a asp-route-historyPage="@(Model.HistoryPage - 1)" asp-route-from="@Model.From?.ToString("yyyy-MM-dd")" asp-route-to="@Model.To?.ToString("yyyy-MM-dd")" asp-route-product="@Model.Product">Previous</a>
+                }
+                <span>Page @Model.HistoryPage of @Model.PageCount</span>
+                @if (Model.HistoryPage < Model.PageCount)
+                {
+                    <a asp-route-historyPage="@(Model.HistoryPage + 1)" asp-route-from="@Model.From?.ToString("yyyy-MM-dd")" asp-route-to="@Model.To?.ToString("yyyy-MM-dd")" asp-route-product="@Model.Product">Next</a>
+                }
+            </nav>
+        }
+    }
+</section>
+
+@if (ViewData.ModelState.IsValid && !string.IsNullOrWhiteSpace(Model.Product))
+{
+    <section class="panel products-panel customer-history">
+        <div class="panel__heading"><h2>Product purchase and price history</h2></div>
+        @if (Model.ProductPurchases.Count == 0)
+        {
+            <p class="management-empty">No matching purchases in this period.</p>
+        }
+        @foreach (var group in Model.ProductPurchases.GroupBy(purchase => purchase.Item.Code))
+        {
+            var prices = group.Reverse().Select(purchase => new CustomerChartPoint(
+                purchase.PurchasedAtUtc.ToLocalTime().ToString("g"), purchase.Item.Price)).ToArray();
+            <div class="customer-price-history">
+                <h3>@group.First().Item.Name (@group.Key)</h3>
+                <p>@group.Count() purchase(s) · @group.Sum(purchase => purchase.Item.Quantity) unit(s)</p>
+                <div class="table-scroll" role="region" aria-label="@($"Purchases of {group.First().Item.Name}")" tabindex="0">
+                    <table class="products-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Date and time</th>
+                                <th scope="col" class="num">Quantity</th>
+                                <th scope="col" class="num">Unit price</th>
+                                <th scope="col" class="num">Item total</th>
+                                <th scope="col">Receipt</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var purchase in group)
+                            {
+                                <tr>
+                                    <td><time datetime="@purchase.PurchasedAtUtc.ToString("O")">@purchase.PurchasedAtUtc.ToLocalTime().ToString("g")</time></td>
+                                    <td class="num">@purchase.Item.Quantity</td>
+                                    <td class="num">@purchase.Item.Price.ToString("C", currency)</td>
+                                    <td class="num">@purchase.LineTotal.ToString("C", currency)</td>
+                                    <td><a asp-page="/Receipt" asp-route-id="@purchase.ReceiptId">View receipt</a></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <details>
+                    <summary>Unit price over time</summary>
+                    <partial name="_CustomerChart" model="prices" />
+                </details>
+            </div>
+        }
+    </section>
+}

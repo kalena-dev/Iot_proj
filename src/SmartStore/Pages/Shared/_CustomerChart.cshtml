@@ -1,0 +1,17 @@
+@using System.Globalization
+@model IReadOnlyList<SmartStore.Pages.CustomerChartPoint>
+@{
+    var currency = CultureInfo.GetCultureInfo("en-CA");
+    var maximum = Math.Max(1, Model.Max(point => point.Amount));
+}
+<ul class="customer-chart">
+    @foreach (var point in Model)
+    {
+        var width = (point.Amount * 100 / maximum).ToString("0.##", CultureInfo.InvariantCulture);
+        <li>
+            <span>@point.Label</span>
+            <span class="customer-chart-track" aria-hidden="true"><span style="width: @(width)%"></span></span>
+            <span>@point.Amount.ToString("C", currency)</span>
+        </li>
+    }
+</ul>

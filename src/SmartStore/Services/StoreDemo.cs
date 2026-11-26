@@ -199,9 +199,27 @@ public sealed class StoreDemo
         }
     }
 
-    public Task<List<DemoSale>> CustomerHistoryAsync(string email, CancellationToken cancellationToken) =>
-        _sales.Find(s => s.CustomerEmail == email.Trim().ToLowerInvariant())
-            .SortByDescending(s => s.CreatedAtUtc).Limit(100).ToListAsync(cancellationToken);
+    public Task<List<DemoSale>> CustomerHistoryAsync(string email, CancellationToken cancellationToken,
+        DateTime? startUtc = null, DateTime? endUtc = null, int? limit = null)
+    {
+        var filters = Builders<DemoSale>.Filter;
+        var filter = filters.Eq(s => s.CustomerEmail, email.Trim().ToLowerInvariant())
+            & filters.Eq(s => s.PaymentStatus, "approved");
+        if (startUtc is { } start) filter &= filters.Gte(s => s.CreatedAtUtc, start);
+        if (endUtc is { } end) filter &= filters.Lt(s => s.CreatedAtUtc, end);
+        return _sales.Find(filter).SortByDescending(s => s.CreatedAtUtc).ThenByDescending(s => s.Id)
+            .Limit(limit).ToListAsync(cancellationToken);
+    }
+
+    public async Task<decimal> CustomerTotalSpentAsync(string email, CancellationToken cancellationToken)
+    {
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var totals = await _sales.Aggregate()
+            .Match(sale => sale.CustomerEmail == normalizedEmail && sale.PaymentStatus == "approved")
+            .Group(_ => 1, group => new { Total = group.Sum(sale => sale.Total) })
+            .FirstOrDefaultAsync(cancellationToken);
+        return totals?.Total ?? 0;
+    }
 
     public Task<int> CustomerPointsAsync(string email, CancellationToken cancellationToken) =>
         _customers.Find(customer => customer.Email == email, new FindOptions { Collation = EmailCollation })
