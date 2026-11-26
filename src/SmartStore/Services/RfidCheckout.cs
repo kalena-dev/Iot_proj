@@ -12,8 +12,8 @@ public sealed class RfidOptions
     public string ApiKey { get; set; } = "";
 }
 
-public sealed record RfidTag(string Epc, string Code);
-public sealed record RfidBatch(string? Session, string[]? Epcs);
+public sealed record RfidTag(string Epc, string Code, string? ScanId = null);
+public sealed record RfidBatch(string? Session, string[]? Epcs, Guid? ScanId = null);
 
 // One process, one checkout session per page. No native reader SDK dependencies.
 public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clock)
@@ -75,6 +75,8 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
             throw new ArgumentException("Supply a session and between 1 and 100 EPCs.");
         // Validate the whole batch before changing session state.
         var epcs = batch.Epcs.Select(Normalize).Distinct().ToArray();
+        if (batch.ScanId is not null && epcs.Length != 1)
+            throw new ArgumentException("Supply exactly one EPC per scan ID.");
         Session? active;
         lock (gate)
         {
@@ -86,15 +88,16 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
         {
             var code = active.IsReceiving ? "" :
                 await resolve(epc) ?? throw new ArgumentException("An EPC has no stored product mapping.");
-            mapped.Add(new(epc, code));
+            mapped.Add(new(epc, code, active.IsReceiving ? null : batch.ScanId?.ToString("N")));
         }
         lock (gate)
         {
             if (!sessions.TryGetValue(batch.Session, out var session) || session.Expires <= clock.GetUtcNow()) return false;
             var limit = session.IsReceiving ? ReceptionInput.MaxTags : 100;
-            if (session.Tags.Keys.Union(epcs).Count() > limit)
+            var keys = mapped.Select(tag => tag.ScanId is { } id ? "scan:" + id : tag.Epc);
+            if (session.Tags.Keys.Union(keys).Count() > limit)
                 throw new ArgumentException("Session tag limit reached.");
-            foreach (var tag in mapped) session.Tags.TryAdd(tag.Epc, tag);
+            foreach (var tag in mapped) session.Tags.TryAdd(tag.ScanId is { } id ? "scan:" + id : tag.Epc, tag);
             return true;
         }
     }

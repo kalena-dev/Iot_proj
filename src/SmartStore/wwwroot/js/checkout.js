@@ -41,7 +41,7 @@
       Array.from({ length: Math.min(index === 0 ? 2 : 1, product.stock) },
         (_, unit) => ({ epc: `DEMO-${code}-${unit}`, code })));
 
-  // Keep track of which physical RFID tags are in the cart
+  // Track processed scan events, or EPCs from older reader bridges.
   const scannedTags = new Map();
 
   // Display the shopping cart
@@ -75,7 +75,7 @@
           delete cart[code];
         }
 
-        // Keep seen EPCs suppressed after removal until a new checkout session.
+        // A previously processed scan event is still a duplicate after removal.
         error.textContent = '';
         render();
       });
@@ -170,16 +170,8 @@
       }
       if (response.status === 409) throw new Error('This code already belongs to another product. Scan it again.');
       if (!response.ok) throw new Error('Could not verify this code with inventory.');
-      const {code, isTag} = await response.json();
-      const epc = barcode.toUpperCase();
-      if (isTag && scannedTags.has(epc)) {
-        error.textContent = 'This tag has already been scanned.';
-        return;
-      }
-      if (add(code)) {
-        if (isTag) scannedTags.set(epc, code);
-        resetMatch();
-      }
+      const {code} = await response.json();
+      if (add(code)) resetMatch();
     } catch (failure) {
       error.textContent = failure.message;
     } finally {
@@ -221,18 +213,20 @@
     const uniqueTags = new Map();
 
     for (const tag of tags) {
-      if (tag.epc && !uniqueTags.has(tag.epc)) {
-        uniqueTags.set(tag.epc, tag);
+      const scanKey = tag.scanId ? `scan:${tag.scanId}` : tag.epc;
+      if (tag.epc && !uniqueTags.has(scanKey)) {
+        uniqueTags.set(scanKey, tag);
       }
     }
 
-    for (const tag of uniqueTags.values()) {
+    for (const [scanKey, tag] of uniqueTags) {
      
-      if (scannedTags.has(tag.epc)) {
+      if (scannedTags.has(scanKey)) {
         duplicates++;
         continue;
       }
 
+      scannedTags.set(scanKey, tag.code);
       const product = products.get(tag.code);
 
       if (!product) {
@@ -247,7 +241,6 @@
 
       cart[tag.code] = (cart[tag.code] || 0) + 1;
 
-      scannedTags.set(tag.epc, tag.code);
       added++;
     }
 
@@ -291,7 +284,7 @@
       }
       if (!response.ok) throw new Error('Reader bridge unavailable');
       const tags = await response.json();
-      const newTags = tags.filter(tag => !scannedTags.has(tag.epc));
+      const newTags = tags.filter(tag => !scannedTags.has(tag.scanId ? `scan:${tag.scanId}` : tag.epc));
       if (newTags.length) processRfidScan(newTags);
       else if (!tags.length) rfidStatus.textContent = 'Waiting for RFID events. No tags received.';
     } catch {

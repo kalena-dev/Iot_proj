@@ -75,16 +75,26 @@ test('reader polling deduplicates physical tags and does not re-add removed tags
   assert.deepEqual(ui.cart(), {'1001': 1});
 });
 
-test('typed EPC and reader scan count the same physical item once', async () => {
-  const ui = setup('reader', [{epc: 'E2801191A503006599BFD10D', code: '1002'}]);
+test('each submitted EPC adds one item', async () => {
+  const ui = setup();
   const input = ui.selectors['#item-code'];
-  input.value = ' e2801191a503006599bfd10d ';
-  await input.handlers.keydown({key: 'Enter', preventDefault() {}});
-  assert.deepEqual(ui.cart(), {'1002': 1});
+  for (const epc of [' e2801191a503006599bfd10d ', 'E2801191A503006599BFD10D']) {
+    input.value = epc;
+    await input.handlers.keydown({key: 'Enter', preventDefault() {}});
+  }
+  assert.deepEqual(ui.cart(), {'1002': 2});
+});
+
+test('separate reader events can carry the same EPC', async () => {
+  const tags = [{epc: 'AABB', code: '1001', scanId: 'first'}];
+  const ui = setup('reader', tags);
   await new Promise(resolve => setImmediate(resolve));
-  input.value = 'E2801191A503006599BFD10D';
-  await ui.selectors['#item-code'].handlers.keydown({key: 'Enter', preventDefault() {}});
-  assert.deepEqual(ui.cart(), {'1002': 1});
+  await ui.poll();
+  assert.deepEqual(ui.cart(), {'1001': 1});
+  tags.push({epc: 'AABB', code: '1001', scanId: 'second'});
+  await ui.poll();
+  await ui.poll();
+  assert.deepEqual(ui.cart(), {'1001': 2});
 });
 
 test('an unrecognized barcode of any format can be assigned a product across sessions', async () => {
