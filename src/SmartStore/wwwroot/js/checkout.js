@@ -41,7 +41,8 @@
       Array.from({ length: Math.min(index === 0 ? 2 : 1, product.stock) },
         (_, unit) => ({ epc: `DEMO-${code}-${unit}`, code })));
 
-  // Keep track of which physical RFID tags were scanned (also after removal, so the reader can't re-add them)
+  // Keep track of which physical RFID tags were scanned (also after removal, so the reader can't re-add them).
+  // One tag is one unit: the same EPC never counts twice, even across separate reader events.
   const scannedTags = new Map();
 
   // The tags of each cart line, so checkout sells those exact units. The rest of a line was added by barcode.
@@ -242,21 +243,20 @@
 
     const uniqueTags = new Map();
 
+    // Keyed by EPC, not by reader event (scanId): showing the same tag again is not another unit.
     for (const tag of tags) {
-      const scanKey = tag.scanId ? `scan:${tag.scanId}` : tag.epc;
-      if (tag.epc && !uniqueTags.has(scanKey)) {
-        uniqueTags.set(scanKey, tag);
+      if (tag.epc && !uniqueTags.has(tag.epc)) {
+        uniqueTags.set(tag.epc, tag);
       }
     }
 
-    for (const [scanKey, tag] of uniqueTags) {
-     
-      if (scannedTags.has(scanKey)) {
+    for (const tag of uniqueTags.values()) {
+
+      if (scannedTags.has(tag.epc)) {
         duplicates++;
         continue;
       }
 
-      scannedTags.set(scanKey, tag.code);
       const product = products.get(tag.code);
 
       if (!product) {
@@ -316,7 +316,7 @@
       }
       if (!response.ok) throw new Error('Reader bridge unavailable');
       const tags = await response.json();
-      const newTags = tags.filter(tag => !scannedTags.has(tag.scanId ? `scan:${tag.scanId}` : tag.epc));
+      const newTags = tags.filter(tag => !scannedTags.has(tag.epc));
       if (newTags.length) processRfidScan(newTags);
       else if (!tags.length) rfidStatus.textContent = 'Waiting for RFID events. No tags received.';
     } catch {

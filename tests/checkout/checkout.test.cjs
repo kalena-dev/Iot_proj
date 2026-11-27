@@ -80,7 +80,7 @@ test('barcode units and scanned tags of one product are sent apart; removal take
   const ui = setup('reader', [{epc: 'E2801191A503006599BFD10D', code: '1002'}]);
   await new Promise(resolve => setImmediate(resolve));
   ui.selectors['#item-code'].value = '1002';
-  await ui.selectors['#add-item'].click();
+  await ui.selectors['#item-code'].handlers.keydown({key: 'Enter', preventDefault() {}});
   assert.deepEqual(ui.cart(), {'1002': 1, 'E2801191A503006599BFD10D': 1});
   ui.selectors['#cart-list'].children[0].children[1].click();
   assert.deepEqual(ui.cart(), {'E2801191A503006599BFD10D': 1});
@@ -88,7 +88,7 @@ test('barcode units and scanned tags of one product are sent apart; removal take
   assert.deepEqual(ui.cart(), {});
 });
 
-test('each submitted EPC adds one item', async () => {
+test('the same EPC typed twice is one item, sent as that tag', async () => {
   const ui = setup();
   const input = ui.selectors['#item-code'];
   for (const epc of [' e2801191a503006599bfd10d ', 'E2801191A503006599BFD10D']) {
