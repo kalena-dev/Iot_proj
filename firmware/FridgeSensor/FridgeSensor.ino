@@ -1,13 +1,25 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <time.h>
 #include <ESPmDNS.h>
 #include <PubSubClient.h>
 #include <DHT.h>
 #include "secrets.h"
 
-// Both ESP32 boards use GPIO26. flash-sensor.sh selects a topic at build time.
-// For Arduino IDE uploads, change this default to "Frig2" for board 2.
-#ifndef FRIDGE_TOPIC
+// flash-sensor.sh selects the board identity; each board has its own broker role.
+#ifndef FRIDGE_ID
+#define FRIDGE_ID 1
+#endif
+#if FRIDGE_ID == 1
 #define FRIDGE_TOPIC "Frig1"
+#define SENSOR_MQTT_USER FRIG1_MQTT_USER
+#define SENSOR_MQTT_PASSWORD FRIG1_MQTT_PASSWORD
+#elif FRIDGE_ID == 2
+#define FRIDGE_TOPIC "Frig2"
+#define SENSOR_MQTT_USER FRIG2_MQTT_USER
+#define SENSOR_MQTT_PASSWORD FRIG2_MQTT_PASSWORD
+#else
+#error "FRIDGE_ID must be 1 or 2"
 #endif
 #ifndef DHT_PIN
 #define DHT_PIN 26
@@ -16,7 +28,7 @@
 #define MQTT_HOST ""  // Empty = discover the broker; no embedded server IP.
 #endif
 
-WiFiClient network;
+WiFiClientSecure network;
 PubSubClient mqtt(network);
 DHT dht(DHT_PIN, DHT11);
 const unsigned long SAMPLE_INTERVAL_MS = 5000; // DHT11 requires >= 2 seconds.
@@ -31,12 +43,13 @@ char clientId[64];
 bool wifiWasConnected = false;
 bool mdnsStarted = false;
 bool brokerResolved = false;
+IPAddress brokerAddress;
 
 bool resolveBroker() {
   IPAddress address;
   uint16_t port = MQTT_PORT;
   if (strlen(MQTT_HOST) > 0) {
-    // Optional stable DNS hostname for networks that filter multicast.
+    // Location may be an IP or DNS alias; it never changes the TLS identity.
     String host = MQTT_HOST;
     if (host.endsWith(".local")) {
       if (!mdnsStarted) mdnsStarted = MDNS.begin(clientId);
@@ -50,9 +63,10 @@ bool resolveBroker() {
     if (mdnsStarted) {
       const int count = MDNS.queryService("northstar-mqtt", "tcp");
       for (int i = 0; i < count; ++i) {
-        if (MDNS.txt(i, "version") != "1") continue;
+        if (MDNS.txt(i, "tls") != "1" ||
+            MDNS.txt(i, "serverName") != MQTT_SERVER_NAME) continue;
         const IPAddress candidate = MDNS.address(i);
-        if (candidate == IPAddress(0, 0, 0, 0) || MDNS.port(i) == 0) continue;
+        if (candidate == IPAddress(0, 0, 0, 0) || MDNS.port(i) != MQTT_PORT) continue;
         address = candidate;
         port = MDNS.port(i);
         break;
@@ -63,8 +77,10 @@ bool resolveBroker() {
     Serial.println("Broker not found. Start the IoT service; allow local mDNS UDP5353 and MQTT TCP traffic.");
     return false;
   }
+  brokerAddress = address;
   mqtt.setServer(address, port);
-  Serial.printf("Broker resolved: %s:%u; topic %s\n", address.toString().c_str(), port, FRIDGE_TOPIC);
+  Serial.printf("Broker location %s:%u; TLS identity %s; topic %s\n",
+    address.toString().c_str(), port, MQTT_SERVER_NAME, FRIDGE_TOPIC);
   return true;
 }
 
@@ -77,6 +93,9 @@ void setup() {
   WiFi.setHostname(clientId);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  network.setCACert(MQTT_CA_CERT);
+  network.setHandshakeTimeout(10);
   mqtt.setBufferSize(256);
   mqtt.setKeepAlive(20);
   mqtt.setSocketTimeout(3);
@@ -107,6 +126,11 @@ void loop() {
     wifiWasConnected = true;
     Serial.printf("WiFi connected; ESP32 IP %s, topic %s\n", WiFi.localIP().toString().c_str(), FRIDGE_TOPIC);
   }
+  // Certificate validity requires a synchronized UTC clock; never skip validation.
+  if (time(nullptr) < 1735689600) {
+    delay(100);
+    return;
+  }
   if (!mqtt.connected()) {
     if (!brokerResolved && (lastDiscovery == 0 || now - lastDiscovery >= DISCOVERY_INTERVAL_MS)) {
       lastDiscovery = now;
@@ -114,12 +138,17 @@ void loop() {
     }
     if (brokerResolved && now - lastMqttAttempt >= 3000) {
       lastMqttAttempt = now;
-      const bool connected = strlen(MQTT_USER) > 0
-        ? mqtt.connect(clientId, MQTT_USER, MQTT_PASSWORD) : mqtt.connect(clientId);
+      // This API preserves SNI and hostname validation while using a discovered
+      // address. Requires Arduino ESP32 core 3.3.3 or newer.
+      const bool secure = network.connect(brokerAddress, MQTT_PORT,
+        MQTT_SERVER_NAME, MQTT_CA_CERT, nullptr, nullptr);
+      const bool connected = secure &&
+        mqtt.connect(clientId, SENSOR_MQTT_USER, SENSOR_MQTT_PASSWORD);
       if (connected) Serial.printf("MQTT connected; publishing to %s.\n", FRIDGE_TOPIC);
       else {
         Serial.printf("MQTT unavailable (state %d); resolving broker again.\n", mqtt.state());
         brokerResolved = false; // Re-discover/re-resolve after server IP changes.
+        network.stop();
       }
     }
   }

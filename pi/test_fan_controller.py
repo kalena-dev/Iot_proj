@@ -1,4 +1,6 @@
 import json
+import tempfile
+from pathlib import Path
 import unittest
 from fan_controller import FanController, SimulatedOutput, MotorDriverOutput, validate_motor_config, mqtt_connection_settings, utc_iso
 
@@ -6,10 +8,12 @@ from fan_controller import FanController, SimulatedOutput, MotorDriverOutput, va
 class FanTests(unittest.TestCase):
     def setUp(self):
         self.now = 1700000000.0
+        self.monotonic = 100.0
         self.output = SimulatedOutput()
         self.messages = []
         self.fan = FanController(self.output, lambda p: self.messages.append(json.loads(p)),
-                                 simulated=True, max_run_seconds=10, clock=lambda: self.now)
+                                 simulated=True, max_run_seconds=10, clock=lambda: self.now,
+                                 monotonic=lambda: self.monotonic)
         self.fan.connected()
 
     def command(self, on=True, command_id='test-command', age=15):
@@ -41,11 +45,101 @@ class FanTests(unittest.TestCase):
         payload = self.command()
         self.fan.apply(payload)
         self.now += 5
+        self.monotonic += 5
         self.assertFalse(self.fan.apply(payload))
         self.now += 6
+        self.monotonic += 6
         self.fan.tick()
         self.assertEqual(self.output.value, 0)
         self.assertIn('timeout', self.messages[-1]['reason'])
+
+    def test_distinct_on_commands_cannot_extend_continuous_run(self):
+        self.assertTrue(self.fan.apply(self.command()))
+        original_deadline = self.fan.deadline
+        self.monotonic += 9
+        self.assertTrue(self.fan.apply(self.command(command_id='another-on')))
+        self.assertEqual(self.fan.deadline, original_deadline)
+        self.monotonic += 1
+        self.fan.tick()
+        self.assertEqual(self.output.value, 0)
+
+    def test_on_at_elapsed_deadline_is_off_without_waiting_for_tick(self):
+        self.fan.apply(self.command())
+        self.monotonic += 10
+        self.assertFalse(self.fan.apply(self.command(command_id='late-on')))
+        self.assertEqual(self.output.value, 0)
+        self.assertIsNone(self.fan.deadline)
+
+    def test_forward_and_backward_wall_clock_jumps_do_not_change_cutoff(self):
+        for jump in (-86400, 86400):
+            with self.subTest(jump=jump):
+                self.fan.connected()
+                self.assertTrue(self.fan.apply(self.command(command_id=str(jump))))
+                self.now += jump
+                self.monotonic += 9
+                self.fan.tick()
+                self.assertEqual(self.output.value, 1)
+                self.monotonic += 1
+                self.fan.tick()
+                self.assertEqual(self.output.value, 0)
+
+    def test_off_preempts_and_is_idempotent(self):
+        self.fan.apply(self.command())
+        off = self.command(False, 'stop')
+        self.assertTrue(self.fan.apply(off))
+        self.assertTrue(self.fan.apply(off))
+        self.assertEqual(self.output.value, 0)
+        self.assertIsNone(self.fan.deadline)
+        self.monotonic += 3
+        self.assertTrue(self.fan.apply(self.command(command_id='new-run')))
+        self.assertEqual(self.fan.deadline, self.monotonic + 10)
+
+    def test_expiry_requires_timezone_and_off_is_not_retained(self):
+        bad = json.loads(self.command())
+        bad['expiresAt'] = '2023-11-14T22:13:35'
+        self.assertFalse(self.fan.apply(json.dumps(bad)))
+        self.fan.apply(self.command())
+        self.assertFalse(self.fan.apply(self.command(False, 'stop'), retained=True))
+        self.assertEqual(self.output.value, 1)
+        self.assertTrue(self.fan.apply(self.command(False, 'stop')))
+
+    def test_replay_protection_survives_restart_and_more_than_128_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Path(directory) / 'commands.json'
+            make = lambda: FanController(SimulatedOutput(), lambda _: None,
+                clock=lambda: self.now, monotonic=lambda: self.monotonic,
+                replay_file=journal)
+            fan = make()
+            fan.connected()
+            for index in range(130):
+                self.assertTrue(fan.apply(self.command(command_id=str(index))))
+            fan.disconnected()
+            restarted = make()
+            restarted.connected()
+            self.assertFalse(restarted.apply(self.command(command_id='0')))
+            self.assertEqual(restarted.output.value, 0)
+
+    def test_failed_replay_write_never_energizes_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Path(directory) / 'commands.json'
+            fan = FanController(SimulatedOutput(), lambda _: None,
+                clock=lambda: self.now, replay_file=journal)
+            fan.connected()
+            journal.mkdir()
+            with self.assertRaises(OSError):
+                fan.apply(self.command())
+            self.assertEqual(fan.output.value, 0)
+
+    def test_invalid_replay_journal_initializes_safe_off(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Path(directory) / 'commands.json'
+            journal.write_text('[]')
+            output = SimulatedOutput()
+            output.on()
+            with self.assertRaises(ValueError):
+                FanController(output, lambda _: None, replay_file=journal)
+            self.assertEqual(output.value, 0)
+
 
 
 class TrackedOutput:
@@ -119,7 +213,8 @@ class MotorDriverTests(unittest.TestCase):
     def test_disconnect_and_timeout_disable_both_real_output_roles(self):
         output, events = self.output()
         now = [1700000000.0]
-        fan = FanController(output, lambda _: None, max_run_seconds=5, clock=lambda: now[0])
+        fan = FanController(output, lambda _: None, max_run_seconds=5,
+                            clock=lambda: now[0], monotonic=lambda: now[0])
         fan.connected()
         command = lambda token: json.dumps({'commandId': token, 'on': True, 'expiresAt': utc_iso(now[0] + 15)})
         fan.apply(command('first'))
@@ -132,12 +227,12 @@ class MotorDriverTests(unittest.TestCase):
         self.assertEqual(output.enable.value, 0)
         self.assertEqual(output.in2.value, 0)
 
-    def test_gpio17_27_require_status_gpio_disabled(self):
+    def test_gpio17_27_keep_status_outputs_on_relocated_defaults(self):
         settings = {'FAN_GPIO': '27', 'FAN_IN2_GPIO': '17'}
+        self.assertEqual(validate_motor_config(settings), (27, 17, 300))
         with self.assertRaisesRegex(ValueError, 'conflicts'):
-            validate_motor_config(settings)
+            validate_motor_config({**settings, 'GPIO__BLUELEDPIN': '17'})
         self.assertEqual(validate_motor_config({**settings, 'GPIO__ENABLED': 'false'}), (27, 17, 300))
-        self.assertEqual(validate_motor_config({**settings, 'Gpio__Enabled': 'false'}), (27, 17, 300))
 
     def test_duplicate_invalid_or_custom_conflicting_pins_are_rejected(self):
         for settings in [
@@ -147,28 +242,35 @@ class MotorDriverTests(unittest.TestCase):
         ]:
             with self.assertRaises(ValueError):
                 validate_motor_config(settings)
-        self.assertEqual(validate_motor_config({}), (23, None, 300))
+        self.assertEqual(validate_motor_config({}), (27, 17, 300))
 
 
 class MqttSettingsTests(unittest.TestCase):
-    def test_url_overrides_conflicting_legacy_host_port_and_tls(self):
-        settings = {'MQTT_URL': 'mqtt://127.0.0.1:1883', 'MQTT_HOST': 'wrong-host',
-                    'MQTT_PORT': '8883', 'MQTT_TLS': 'true'}
-        self.assertEqual(mqtt_connection_settings(settings)[:3], ('127.0.0.1', 1883, False))
+    def settings(self, **overrides):
+        return {'MQTT_URL': 'mqtts://localhost:8883', 'MQTT_USER': 'northstar-fan',
+                'MQTT_PASSWORD': 'distinct-test-password-not-real',
+                'MQTT_CA_FILE': '/test/ca.crt',
+                'MQTT_SERVER_NAME': 'broker.test', **overrides}
 
-    def test_tls_url_default_port_and_url_credentials(self):
-        self.assertEqual(mqtt_connection_settings({'MQTT_URL': 'mqtts://test-user:test%2Dpassword@broker.test'}),
-                         ('broker.test', 8883, True, 'test-user', 'test-password'))
-        self.assertEqual(mqtt_connection_settings({'MQTT_URL': 'mqtts://broker.test:2883',
-                                                  'MQTT_USER': 'explicit-user', 'MQTT_PASSWORD': 'explicit-test'})[1:],
-                         (2883, True, 'explicit-user', 'explicit-test'))
+    def test_certificate_server_name_overrides_location_not_validation(self):
+        self.assertEqual(mqtt_connection_settings(self.settings()),
+                         ('broker.test', 8883, True, 'northstar-fan', 'distinct-test-password-not-real'))
+        self.assertEqual(mqtt_connection_settings(self.settings(MQTT_URL='mqtts://192.0.2.1:2883'))[:3],
+                         ('broker.test', 2883, True))
 
-    def test_legacy_fields_and_invalid_urls(self):
-        self.assertEqual(mqtt_connection_settings({})[:3], ('127.0.0.1', 1883, False))
-        self.assertEqual(mqtt_connection_settings({'MQTT_TLS': 'true'})[:3], ('127.0.0.1', 8883, True))
-        for url in ['https://broker.test', 'mqtt://', 'mqtt://broker.test:invalid', 'mqtt://broker.test:65536']:
-            with self.assertRaises(ValueError):
-                mqtt_connection_settings({'MQTT_URL': url})
+    def test_insecure_missing_and_shared_credentials_rejected(self):
+        for override in [
+            {'MQTT_URL': 'mqtt://localhost'}, {'MQTT_URL': 'mqtt://remote.test'},
+            {'MQTT_URL': 'mqtts://user:secret@broker.test'}, {'MQTT_URL': 'https://broker.test'},
+            {'MQTT_URL': 'mqtts://'}, {'MQTT_URL': 'mqtts://broker.test:65536'},
+            {'MQTT_URL': 'mqtts://broker.test:invalid'}, {'MQTT_CA_FILE': ''},
+            {'MQTT_USER': 'northstar'}, {'MQTT_PASSWORD': 'short'},
+            {'MQTT_SERVER_NAME': ''}
+        ]:
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                mqtt_connection_settings(self.settings(**override))
+        with self.assertRaises(ValueError):
+            mqtt_connection_settings({})
 
 
 if __name__ == '__main__':

@@ -13,7 +13,7 @@ const settings = () => gmailSettings('alerts@sender.test', 'abcd efgh ijkl mnop'
 test('Gmail setup derives both servers/ports and normalizes the app password', () => {
   const values = settings();
   assert.equal(values.SMTP_HOST, 'smtp.gmail.com');
-  assert.equal(values.SMTP_PORT, '465');
+  assert.equal(values.SMTP_PORT, '587');
   assert.equal(values.IMAP_HOST, 'imap.gmail.com');
   assert.equal(values.IMAP_PORT, '993');
   assert.equal(values.SMTP_PASSWORD, 'abcdefghijklmnop');
@@ -21,7 +21,7 @@ test('Gmail setup derives both servers/ports and normalizes the app password', (
   assert.equal(values.SMTP_USER, values.IMAP_USER);
   const { config, recipient } = emailConfigFromValues(values);
   assert.equal(config.enabled, true);
-  assert.equal(config.smtpPort, 465);
+  assert.equal(config.smtpPort, 587);
   assert.equal(config.imapPort, 993);
   assert.equal(recipient, 'owner@recipient.test');
 });
@@ -80,6 +80,19 @@ test('setup and startup share process > explicit file > project > user config pr
   assert.equal(values.SMTP_HOST, 'explicit-host');
   assert.equal(values.IOT_API_KEY, 'project-key');
   assert.equal(values.MONGODB_URI, 'mongodb://fallback');
+});
+
+test('explicit service configuration never imports shared project or user credentials', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'northstar-isolated-config-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const privateFile = join(directory, 'iot.env');
+  await writeFile(privateFile, 'SMTP_HOST=private-host\n');
+  await writeFile(join(directory, '.env'), 'MONGODB_URI=mongodb://must-not-import\n');
+  const values = loadConfiguration(directory, { NORTHSTAR_CONFIG_FILE: privateFile, SMTP_USER: 'process' });
+  assert.equal(values.SMTP_HOST, 'private-host');
+  assert.equal(values.SMTP_USER, 'process');
+  assert.equal(values.MONGODB_URI, undefined);
+  assert.throws(() => loadConfiguration(directory, { NORTHSTAR_CONFIG_FILE: join(directory, 'missing.env') }), /NORTHSTAR_CONFIG_FILE/);
 });
 
 test('conflicting environment overrides are reported by key only', () => {

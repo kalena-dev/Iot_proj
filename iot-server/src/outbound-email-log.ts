@@ -12,8 +12,9 @@ export class OutboundEmailLog {
   async send(kind: string, from: string, to: string, subject: string, submit: () => Promise<unknown>, reference?: string) {
     const records = this.db.collection<EmailRecord>('email_log');
     const _id = randomUUID();
-    await records.insertOne({ _id, Kind: kind, Sender: from, Recipient: to, Subject: subject,
-      ...(reference ? { Reference: reference } : {}), CreatedAtUtc: new Date(), Status: 'pending' });
+    await records.insertOne({ _id, Kind: kind, Sender: from, Recipient: to,
+      Subject: kind === 'temperature-alert' ? 'Temperature alert [approval redacted]' : subject.replace(/\[Northstar:[^\]]*\]/gi, '[approval redacted]'),
+      ...(reference && kind !== 'temperature-alert' ? { Reference: reference } : {}), CreatedAtUtc: new Date(), Status: 'pending' });
     try {
       await submit();
     } catch (error) {

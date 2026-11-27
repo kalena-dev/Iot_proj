@@ -5,10 +5,10 @@ import os
 import signal
 import threading
 import time
-from collections import deque
+import ssl
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 
 def utc_iso(now=None):
@@ -16,18 +16,28 @@ def utc_iso(now=None):
 
 
 class FanController:
-    def __init__(self, output, publish, simulated=False, max_run_seconds=300, clock=time.time):
+    def __init__(self, output, publish, simulated=False, max_run_seconds=300,
+                 clock=time.time, monotonic=time.monotonic, replay_file=None):
         self.output = output
+        self.output.off()
         self.publish = publish
         self.simulated = simulated
         self.max_run_seconds = max_run_seconds
         self.clock = clock
+        self.monotonic = monotonic
+        self.replay_file = Path(replay_file) if replay_file else None
         self.online = False
         self.command_id = None
         self.deadline = None
-        self.seen = deque(maxlen=128)
+        self.last_status = float('-inf')
+        self.seen = {}
+        if self.replay_file and self.replay_file.exists():
+            saved = json.loads(self.replay_file.read_text())
+            if not isinstance(saved, dict) or any(not isinstance(key, str) or
+                    type(value) not in (int, float) for key, value in saved.items()):
+                raise ValueError('Invalid fan replay journal; leave output disabled and inspect it')
+            self.seen = saved
         self.lock = threading.RLock()
-        self.output.off()
 
     def status(self, reason='heartbeat'):
         self.publish(json.dumps({
@@ -57,35 +67,71 @@ class FanController:
                 command = json.loads(payload)
                 command_id = command['commandId']
                 on = command['on']
-                expires = datetime.fromisoformat(command['expiresAt'].replace('Z', '+00:00')).timestamp()
+                expires_text = command['expiresAt']
+                expires_date = datetime.fromisoformat(expires_text.replace('Z', '+00:00'))
+                if expires_date.tzinfo is None:
+                    return False
+                expires = expires_date.timestamp()
                 if not isinstance(command_id, str) or not 1 <= len(command_id) <= 80 or type(on) is not bool:
                     return False
-                if not self.clock() < expires <= self.clock() + 60:
+                now = self.clock()
+                if not now < expires <= now + 60:
                     return False
             except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
                 return False
+            if not on:
+                # OFF is idempotent and preempts even a replayed OFF command.
+                self.output.off()
+                self.deadline = None
+                self.command_id = command_id
+                self.status('GPIO output applied; OFF')
+                return True
             if command_id in self.seen:
                 self.status('duplicate command ignored')
                 return False
-            if on:
-                self.output.on()
-                self.deadline = self.clock() + self.max_run_seconds
-            else:
+            # Keep a full day beyond expiry so ordinary clock corrections cannot
+            # revive commands. Fail closed rather than evict live replay entries.
+            self.seen = {key: expiry for key, expiry in self.seen.items() if expiry >= now - 86400}
+            if len(self.seen) >= 8192:
+                return False
+            self.seen[command_id] = expires
+            if self.replay_file:
+                self.replay_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                temporary = self.replay_file.with_suffix('.tmp')
+                with temporary.open('w') as journal:
+                    json.dump(self.seen, journal)
+                    journal.flush()
+                    os.fsync(journal.fileno())
+                temporary.replace(self.replay_file)
+                if os.name != 'nt':
+                    directory = os.open(self.replay_file.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(directory)
+                    finally:
+                        os.close(directory)
+            if self.deadline is not None and self.monotonic() >= self.deadline:
                 self.output.off()
                 self.deadline = None
+                self.status('safety run timeout; OFF')
+                return False
+            if not self.output.value:
+                self.output.on()
+                self.deadline = self.monotonic() + self.max_run_seconds
             self.command_id = command_id
-            self.seen.append(command_id)
             self.status('GPIO output applied')
             return True
 
     def tick(self):
         with self.lock:
-            if self.deadline is not None and self.clock() >= self.deadline:
+            now = self.monotonic()
+            if self.deadline is not None and now >= self.deadline:
                 self.output.off()
                 self.deadline = None
                 self.status('safety run timeout; OFF')
-            elif self.online:
+                self.last_status = now
+            elif self.online and now - self.last_status >= 5:
                 self.status()
+                self.last_status = now
 
 
 class SimulatedOutput:
@@ -152,8 +198,8 @@ class MotorDriverOutput:
 def validate_motor_config(environment):
     # ASP.NET configuration keys are case-insensitive, including GPIO__ENABLED.
     settings = {key.upper(): value for key, value in environment.items()}
-    pin = int(settings.get('FAN_GPIO', '23'))
-    in2_text = settings.get('FAN_IN2_GPIO', '').strip()
+    pin = int(settings.get('FAN_GPIO', '27'))
+    in2_text = settings.get('FAN_IN2_GPIO', '17').strip()
     in2_pin = int(in2_text) if in2_text else None
     max_run = int(settings.get('FAN_MAX_RUN_SECONDS', '300'))
     pins = [pin] + ([] if in2_pin is None else [in2_pin])
@@ -164,8 +210,8 @@ def validate_motor_config(environment):
     if not 1 <= max_run <= 3600:
         raise ValueError('FAN_MAX_RUN_SECONDS must be 1–3600')
     if settings.get('GPIO__ENABLED', 'true').strip().lower() != 'false':
-        reserved = {int(settings.get('GPIO__BLUELEDPIN', '17')),
-                    int(settings.get('GPIO__REDLEDPIN', '27'))}
+        reserved = {int(settings.get('GPIO__BLUELEDPIN', '5')),
+                    int(settings.get('GPIO__REDLEDPIN', '6'))}
         if settings.get('GPIO__BUZZERENABLED', 'true').strip().lower() != 'false':
             reserved.add(int(settings.get('GPIO__BUZZERPIN', '22')))
         if set(pins) & reserved:
@@ -194,40 +240,33 @@ def create_motor_output(pin, in2_pin):
 
 
 def mqtt_connection_settings(environment):
-    """Use the same MQTT_URL as TypeScript; legacy fields are fallback only."""
-    url = environment.get('MQTT_URL', '').strip()
-    parsed = None
-    if url:
-        parsed = urlparse(url)
-        if parsed.scheme not in ('mqtt', 'mqtts') or not parsed.hostname:
-            raise ValueError('MQTT_URL must use mqtt:// or mqtts:// with a broker hostname')
-        tls = parsed.scheme == 'mqtts'
-        host = parsed.hostname
-        try:
-            port = parsed.port or (8883 if tls else 1883)
-        except ValueError:
-            raise ValueError('MQTT_URL must contain a valid broker port') from None
-    else:
-        tls = environment.get('MQTT_TLS', 'false').strip().lower() == 'true'
-        host = environment.get('MQTT_HOST', '127.0.0.1')
-        port = int(environment.get('MQTT_PORT', '8883' if tls else '1883'))
+    """Require authenticated TLS; hostname is the certificate SAN, not discovered IP."""
+    parsed = urlparse(environment.get('MQTT_URL', 'mqtts://localhost:8883').strip())
+    if parsed.scheme != 'mqtts' or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('MQTT_URL must use mqtts:// without embedded credentials')
+    try:
+        port = parsed.port or 8883
+    except ValueError:
+        raise ValueError('MQTT_URL must contain a valid broker port') from None
     if not 1 <= port <= 65535:
         raise ValueError('MQTT port must be 1–65535')
-    username = environment.get('MQTT_USER') or (unquote(parsed.username or '') if parsed else '')
-    password = environment.get('MQTT_PASSWORD') or (unquote(parsed.password or '') if parsed else '')
-    return host, port, tls, username, password
+    host = environment.get('MQTT_SERVER_NAME', parsed.hostname).strip()
+    if not host or '/' in host or ':' in host or any(character.isspace() for character in host):
+        raise ValueError('MQTT_SERVER_NAME must be the broker certificate DNS name')
+    username = environment.get('MQTT_USER', '').strip()
+    password = environment.get('MQTT_PASSWORD', '')
+    if username != 'northstar-fan' or len(password) < 20 or password.startswith(('YOUR_', 'CHANGE_')):
+        raise ValueError('Configure dedicated northstar-fan MQTT credentials (password >=20 characters)')
+    if not environment.get('MQTT_CA_FILE', '').strip():
+        raise ValueError('MQTT_CA_FILE is required')
+    return host, port, True, username, password
 
 
 def main():
     import paho.mqtt.client as mqtt
-    from dotenv import load_dotenv
-    config_home = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config')))
-    for path in [os.getenv('MONGODB_ENV_FILE'), Path(__file__).resolve().parents[1] / '.env',
-                 config_home / 'northstar' / 'credentials.env']:
-        if path:
-            load_dotenv(path, override=False)
+    # systemd supplies only /etc/northstar/fan.env; never load shared DB/mail files.
     host, port, mqtt_tls, username, password = mqtt_connection_settings(os.environ)
-    simulated = os.getenv('FAN_SIMULATE', 'false').lower() == 'true'
+    simulated = os.getenv('FAN_SIMULATE', 'true').lower() == 'true'
     pin, in2_pin, max_run = validate_motor_config(os.environ)
     if simulated:
         output = SimulatedOutput()
@@ -242,8 +281,9 @@ def main():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id='northstar-pi-fan', clean_session=True)
     if username:
         client.username_pw_set(username, password)
-    if mqtt_tls:
-        client.tls_set()
+    context = ssl.create_default_context(cafile=os.environ['MQTT_CA_FILE'])
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    client.tls_set_context(context)
     client.reconnect_delay_set(min_delay=1, max_delay=10)
     client.will_set('store/fan/status', json.dumps({
         'online': False, 'on': False, 'simulated': simulated, 'commandId': None,
@@ -251,7 +291,8 @@ def main():
     }), qos=1, retain=True)
     controller = FanController(output,
         lambda payload: client.publish('store/fan/status', payload, qos=1, retain=True),
-        simulated=simulated, max_run_seconds=max_run)
+        simulated=simulated, max_run_seconds=max_run,
+        replay_file=os.getenv('FAN_REPLAY_FILE', '/var/lib/northstar-fan/commands.json'))
     stop = threading.Event()
 
     def on_connect(_client, _userdata, _flags, reason_code, _properties):
@@ -287,7 +328,7 @@ def main():
     try:
         client.connect_async(host, port, keepalive=15)
         client.loop_start()
-        while not stop.wait(5):
+        while not stop.wait(0.25):
             controller.tick()
     finally:
         controller.disconnected()

@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
-import mqtt from 'mqtt';
+import mqtt, { type IClientOptions } from 'mqtt';
 import { MongoClient } from 'mongodb';
 import { z } from 'zod';
 import { OutboundEmailLog } from './outbound-email-log.js';
@@ -9,16 +9,18 @@ import { Monitor } from './monitor.js';
 import { MongoRepository } from './repository.js';
 import { advertiseBroker } from './discovery.js';
 import { loadConfiguration } from './configuration.js';
+import { controlKeySchema, mqttTlsOptions } from './transport-security.js';
 import { fridgeIds, fanCommandSchema, thresholdSchema, type FridgeId } from './model.js';
 
 const environment = loadConfiguration();
 const number = (fallback: number) => z.coerce.number().int().positive().default(fallback);
 const env = z.object({
   MONGODB_URI: z.string().min(1), MONGODB_DATABASE: z.string().default('smart_store'),
-  MQTT_URL: z.string().url().default('mqtt://127.0.0.1:1883'),
-  MQTT_USER: z.string().default(''), MQTT_PASSWORD: z.string().default(''),
+  MQTT_URL: z.string().url().default('mqtts://localhost:8883'),
+  MQTT_CA_FILE: z.string().min(1), MQTT_SERVER_NAME: z.string().min(1),
+  MQTT_USER: z.literal('northstar-iot'), MQTT_PASSWORD: z.string().min(20).refine(value => !/replace|placeholder|change.?me|your[_ -]/i.test(value)),
   MQTT_DISCOVERY_ENABLED: z.enum(['true', 'false']).default('true'),
-  IOT_PORT: number(3100), IOT_API_KEY: z.string().default(''),
+  IOT_PORT: number(3100), IOT_API_KEY: controlKeySchema,
   DEFAULT_THRESHOLD: z.coerce.number().min(0).max(50).default(8),
   SENSOR_STALE_SECONDS: number(30), ALERT_COOLDOWN_SECONDS: number(900),
   REPLY_EXPIRY_SECONDS: number(900), EMAIL_RETRY_SECONDS: number(60),
@@ -39,19 +41,24 @@ if (config.EMAIL_ENABLED === 'true' && (!z.string().email().safeParse(config.ALE
   console.error('Email enabled but SMTP, IMAP or recipient configuration is incomplete.');
   process.exit(1);
 }
+let tlsOptions: IClientOptions;
+try { tlsOptions = mqttTlsOptions(config.MQTT_URL, config.MQTT_CA_FILE, config.MQTT_SERVER_NAME); }
+catch { console.error('Invalid MQTT TLS configuration. Require mqtts, readable MQTT_CA_FILE and certificate MQTT_SERVER_NAME.'); process.exit(1); }
 const mongo = new MongoClient(config.MONGODB_URI, { serverSelectionTimeoutMS: 8000 });
 const mailer = new EmailService({ enabled: config.EMAIL_ENABLED === 'true',
   smtpHost: config.SMTP_HOST, smtpPort: config.SMTP_PORT, smtpUser: config.SMTP_USER,
   smtpPassword: config.SMTP_PASSWORD, from: config.SMTP_FROM, imapHost: config.IMAP_HOST,
   imapPort: config.IMAP_PORT, imapUser: config.IMAP_USER, imapPassword: config.IMAP_PASSWORD }, undefined, undefined, new OutboundEmailLog(mongo.db(config.MONGODB_DATABASE)));
 const broker = mqtt.connect(config.MQTT_URL, {
+  ...tlsOptions,
   clientId: 'northstar-iot-server', username: config.MQTT_USER || undefined,
   password: config.MQTT_PASSWORD || undefined, reconnectPeriod: 2000, clean: true,
   connectTimeout: 10000, queueQoSZero: false
 });
 // Attach before awaiting MongoDB initialization: MQTT can fail immediately.
 broker.on('error', () => { console.warn('MQTT connection error; retrying. Check broker credentials/network.'); });
-const monitor = new Monitor(new MongoRepository(mongo, config.MONGODB_DATABASE), mailer, {
+const repository = new MongoRepository(mongo, config.MONGODB_DATABASE);
+const monitor = new Monitor(repository, mailer, {
   async publish(command) {
     if (!broker.connected) throw new Error('MQTT is disconnected');
     // Never retain motor commands: an old YES must not turn on a restarted Pi.
@@ -85,12 +92,10 @@ const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '4kb' }));
 app.use((req, res, next) => {
-  if (config.IOT_API_KEY) {
-    const supplied = Buffer.from(req.header('X-Iot-Key') ?? '');
-    const expected = Buffer.from(config.IOT_API_KEY);
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-      res.status(401).json({ error: 'Unauthorized' }); return;
-    }
+  const supplied = Buffer.from(req.header('X-Iot-Key') ?? '');
+  const expected = Buffer.from(config.IOT_API_KEY);
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    res.status(401).json({ error: 'Unauthorized' }); return;
   }
   res.setHeader('Cache-Control', 'no-store');
   next();
@@ -101,13 +106,13 @@ app.put('/api/refrigerators/:id/threshold', async (req, res) => {
   if (!fridgeIds.includes(req.params.id as FridgeId) || !parsed.success) {
     res.status(400).json({ error: 'Choose Frig1/Frig2 and a threshold from 0 to 50 °C.' }); return;
   }
-  await monitor.setThreshold(req.params.id as FridgeId, parsed.data.threshold);
+  await monitor.setThreshold(req.params.id as FridgeId, parsed.data.threshold, parsed.data.actor);
   res.json({ message: 'Threshold saved in MongoDB.' });
 });
 app.post('/api/fan', async (req, res) => {
   const parsed = fanCommandSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: 'on must be a boolean.' }); return; }
-  try { res.json(await monitor.requestFan(parsed.data.on)); }
+  try { res.json(await monitor.requestFan(parsed.data.on, parsed.data.actor)); }
   catch { res.status(409).json({ error: 'Fan controller is unavailable or a command is awaiting confirmation.' }); }
 });
 app.use((_error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -116,17 +121,25 @@ app.use((_error: unknown, _req: express.Request, res: express.Response, _next: e
 // Only the existing Razor app accesses this API; do not expose it to the LAN.
 const server = app.listen(config.IOT_PORT, '127.0.0.1', () => console.log(`IoT service listening on 127.0.0.1:${config.IOT_PORT}`));
 const stopDiscovery = config.MQTT_DISCOVERY_ENABLED === 'true'
-  ? advertiseBroker(config.MQTT_URL) : async () => {};
+  ? advertiseBroker(config.MQTT_URL, config.MQTT_SERVER_NAME) : async () => {};
 let polling = false;
+let ticking = false;
 const poll = async () => {
   if (polling) return;
   polling = true;
-  try { await monitor.tick(); await mailer.poll(monitor); }
-  catch { console.warn('Alert processing failed; check database availability.'); }
+  try { await mailer.poll(monitor, repository); }
+  catch { console.warn('Mailbox processing failed; check database availability.'); }
   finally { polling = false; }
 };
-const timer = setInterval(() => { void poll(); }, 10000);
-void poll();
+const tick = async () => {
+  if (ticking) return;
+  ticking = true;
+  try { await monitor.tick(); }
+  catch { console.warn('Alert processing failed; check database availability.'); }
+  finally { ticking = false; }
+};
+const timer = setInterval(() => { void poll(); void tick(); }, 10000);
+void poll(); void tick();
 async function stop() {
   clearInterval(timer); server.close(); mailer.close();
   await stopDiscovery(); await broker.endAsync(); await mongo.close(); process.exit(0);

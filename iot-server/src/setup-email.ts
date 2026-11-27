@@ -165,7 +165,7 @@ async function main() {
     if (action === 'port') settings = { ...settings, SMTP_PORT: settings.SMTP_PORT === '465' ? '587' : '465' };
   }
   console.log('Test submitted to SMTP. Check the recipient inbox/spam folder to confirm delivery.');
-  const target = resolve(process.env.MONGODB_ENV_FILE || resolve(projectRoot, '.env'));
+  const target = resolve(process.env.NORTHSTAR_CONFIG_FILE || process.env.MONGODB_ENV_FILE || resolve(projectRoot, '.env'));
   try { await savePrivateEmailSettings(target, settings); }
   catch { throw new SetupFailure('Could not save the private settings file. Check its permissions; the test may have been sent, but setup was not applied.'); }
   console.log(`Saved private settings (mode 600): ${target}`);

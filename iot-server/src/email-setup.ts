@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { EmailConfig } from './email.js';
 
 export const gmailEndpoints = {
-  SMTP_HOST: 'smtp.gmail.com', SMTP_PORT: '465',
+  SMTP_HOST: 'smtp.gmail.com', SMTP_PORT: '587',
   IMAP_HOST: 'imap.gmail.com', IMAP_PORT: '993'
 };
 export const emailAddress = z.string().trim().email();
