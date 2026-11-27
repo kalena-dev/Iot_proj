@@ -19,7 +19,7 @@ Approved purchases save an itemized receipt and award the signed-in customer one
 ## Customer and staff accounts
 
 1. Configure SMTP in the local `.env` with `EMAIL_ENABLED=true`. For Gmail, use `smtp.gmail.com` on port `587` with a Gmail app password. The same sender delivers registration codes and receipts.
-2. To enable staff access, set `AUTH_ADMIN_EMAIL` to the staff member's email and restart SmartStore. Register that email through **Create account** and complete email verification. The verified account can open Management and the other staff pages.
+2. Set `AUTH_ADMIN_EMAILS` to a comma-separated list of staff emails in the server's private configuration and restart SmartStore. The existing `AUTH_ADMIN_EMAIL` setting also grants staff access. Each staff member must create and verify their own account before opening Management and the other staff pages.
 3. Customers create and verify their accounts the same way. Use the email from previous checkouts to see existing loyalty points and purchases. **My account** shows the current balance and up to 100 recent checkouts. Self-checkout sends receipts to the signed-in account's email.
 
 

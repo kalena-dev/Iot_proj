@@ -32,9 +32,17 @@ public sealed class StoreAccounts(IMongoClient client, IOptions<MongoDbOptions> 
 
     public static string? EmailOf(ClaimsPrincipal user) => user.FindFirstValue(ClaimTypes.Email);
 
-    public static bool IsStaff(ClaimsPrincipal user, IConfiguration configuration) =>
-        user.Identity?.IsAuthenticated == true && EmailOf(user) is { } email
-        && email == NormalizeEmail(configuration["AUTH_ADMIN_EMAIL"]);
+    public static bool IsStaff(ClaimsPrincipal user, IConfiguration configuration)
+    {
+        if (user.Identity?.IsAuthenticated != true || NormalizeEmail(EmailOf(user)) is not { } email)
+            return false;
+
+        if (email == NormalizeEmail(configuration["AUTH_ADMIN_EMAIL"]))
+            return true;
+
+        return configuration["AUTH_ADMIN_EMAILS"]?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(entry => email == NormalizeEmail(entry)) == true;
+    }
 
     public static Task SignInAsync(HttpContext context, string email)
     {
