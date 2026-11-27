@@ -10,11 +10,12 @@
     <div class="hero__copy">
         <span class="eyebrow">Inventory · phase 03</span>
         <h1>Products</h1>
-        <p>Register, edit and delete products, and receive stock. Stock goes up when a delivery is received and down when a customer checks out.</p>
+        <p>Register, edit and archive products, and receive stock. Archived products retain their inventory and delivery history.</p>
     </div>
     <div class="products-actions">
         <a class="primary-button" asp-page="Create">+ Add product</a>
         <a class="secondary-button" asp-page="Receive">Receive stock</a>
+        <a class="secondary-button" asp-route-archived="@(!Model.Archived)">@(Model.Archived ? "Active products" : "Archived products")</a>
     </div>
 </section>
 
@@ -28,6 +29,7 @@
     else
     {
         <form method="get" class="products-filter" role="search">
+            <input type="hidden" asp-for="Archived" />
             <input asp-for="Q" type="search" placeholder="Search name, producer, or scan a UPC / EPC" aria-label="Search products" data-scan-submit />
             <select asp-for="Category" aria-label="Filter by category">
                 <option value="">All categories</option>
@@ -96,17 +98,20 @@
                                     }
                                 </td>
                                 <td class="row-actions">
-                                    <a asp-page="Receive" asp-route-id="@product.Id">Receive</a>
-                                    <a asp-page="Edit" asp-route-id="@product.Id">Edit</a>
-                                    <details class="confirm-delete">
-                                        <summary>Delete</summary>
-                                        <div class="confirm-delete__box">
-                                            <p>Delete <strong>@product.Name</strong> and its delivery history? This can't be undone.</p>
-                                            <form method="post" asp-page-handler="Delete" asp-route-id="@product.Id" asp-route-q="@Model.Q" asp-route-category="@Model.Category">
-                                                <button type="submit" class="danger-button">Yes, delete</button>
-                                            </form>
-                                        </div>
-                                    </details>
+                                    <a asp-page="Receive" asp-route-id="@product.Id">@(Model.Archived ? "View history" : "Receive")</a>
+                                    @if (product.ArchivedAtUtc is null)
+                                    {
+                                        <a asp-page="Edit" asp-route-id="@product.Id">Edit</a>
+                                        <details class="confirm-delete">
+                                            <summary>Archive</summary>
+                                            <div class="confirm-delete__box">
+                                                <p>Archive <strong>@product.Name</strong>? It will no longer be sold or received. Its inventory and history will be retained.</p>
+                                                <form method="post" asp-page-handler="Archive" asp-route-id="@product.Id" asp-route-q="@Model.Q" asp-route-category="@Model.Category">
+                                                    <button type="submit" class="danger-button">Yes, archive</button>
+                                                </form>
+                                            </div>
+                                        </details>
+                                    }
                                 </td>
                             </tr>
                         }

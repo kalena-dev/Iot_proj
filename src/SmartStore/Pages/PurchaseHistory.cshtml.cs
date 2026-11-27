@@ -24,30 +24,27 @@ public sealed class PurchaseHistoryModel(StoreDemo store) : PageModel
 
     public async Task<IActionResult> OnGetAsync(int historyPage, CancellationToken cancellationToken)
     {
-        if (StoreAccounts.EmailOf(User) is not { } email) return Challenge();
+        if (StoreAccounts.AccountIdOf(User) is not { } accountId) return Challenge();
         if (From > To || To == DateOnly.MaxValue)
             ModelState.AddModelError(nameof(To), "Choose a valid end date on or after the start date.");
+        if (Product?.Length > 200) ModelState.AddModelError(nameof(Product), "Use at most 200 characters.");
         if (!ModelState.IsValid) return Page();
 
         var start = From?.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
         var end = To?.AddDays(1).ToDateTime(TimeOnly.MinValue).ToUniversalTime();
-        var purchases = await store.CustomerHistoryAsync(email, cancellationToken, start, end);
-        TotalSpent = purchases.Sum(sale => sale.Total);
-        IEnumerable<DemoSale> matchingReceipts = purchases;
-        if (Product?.Trim() is { Length: > 0 } search)
-        {
-            ProductPurchases = purchases.SelectMany(sale => sale.Items
-                .Where(item => item.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                    item.Code.Equals(search, StringComparison.OrdinalIgnoreCase))
-                .Select(item => new ProductPurchase(sale.Id, sale.CreatedAtUtc, item))).ToArray();
-            var receiptIds = ProductPurchases.Select(purchase => purchase.ReceiptId).ToHashSet();
-            matchingReceipts = purchases.Where(sale => receiptIds.Contains(sale.Id));
-        }
-
-        var receipts = matchingReceipts.ToArray();
-        PageCount = Math.Max(1, (receipts.Length + PageSize - 1) / PageSize);
+        var page = await store.CustomerHistoryPageAsync(accountId, historyPage, PageSize, Product, start, end, cancellationToken);
+        TotalSpent = page.Total;
+        PageCount = (int)Math.Min(int.MaxValue, Math.Max(1, (page.Count + PageSize - 1) / PageSize));
         HistoryPage = Math.Clamp(historyPage, 1, PageCount);
-        Sales = receipts.Skip((HistoryPage - 1) * PageSize).Take(PageSize).ToArray();
+        Sales = page.Sales;
+        if (Product?.Trim() is { Length: > 0 } search)
+            ProductPurchases = Sales.SelectMany(sale => sale.Items
+                .Where(item => item.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                    (item.Code.Equals(search, StringComparison.OrdinalIgnoreCase) &&
+                        (page.MatchedProductId is null || item.ProductId is null)) ||
+                    item.ProductId == search ||
+                    (page.MatchedProductId != null && item.ProductId == page.MatchedProductId))
+                .Select(item => new ProductPurchase(sale.Id, sale.CreatedAtUtc, item))).ToArray();
         return Page();
     }
 }

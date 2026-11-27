@@ -11,6 +11,7 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
 
     [BindProperty(SupportsGet = true)] public string? Q { get; set; }
     [BindProperty(SupportsGet = true)] public string? Category { get; set; }
+    [BindProperty(SupportsGet = true)] public bool Archived { get; set; }
 
     public IReadOnlyList<Product> Items { get; private set; } = [];
     public IReadOnlyList<string> Categories { get; private set; } = [];
@@ -26,7 +27,8 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
     {
         try
         {
-            var all = await repository.GetAllAsync(cancellationToken);
+            var all = (await repository.GetAllAsync(cancellationToken))
+                .Where(p => Archived ? p.ArchivedAtUtc != null : p.ArchivedAtUtc == null).ToList();
             Codes = (await repository.ListCodesAsync(cancellationToken)).ToLookup(c => c.ProductId, c => c.Code);
             Tagged = await repository.CountTaggedInStockAsync(cancellationToken);
             TotalCount = all.Count;
@@ -56,18 +58,18 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
         }
     }
 
-    public async Task<IActionResult> OnPostDeleteAsync(string id, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnPostArchiveAsync(string id, CancellationToken cancellationToken)
     {
         try
         {
             var product = await repository.GetByIdAsync(id, cancellationToken);
-            if (product is null || !await repository.DeleteAsync(id, cancellationToken))
+            if (product is null || !await repository.ArchiveAsync(id, cancellationToken))
             {
-                SetStatus("That product was already deleted.", "error");
+                SetStatus("That product was already archived.", "error");
             }
             else
             {
-                SetStatus($"Product \"{product.Name}\" deleted successfully.", "success");
+                SetStatus($"Product \"{product.Name}\" archived. Its inventory and delivery history have been retained.", "success");
             }
         }
         catch (TransactionOutcomeUnknownException exception)
@@ -76,11 +78,11 @@ public sealed class IndexModel(IProductRepository repository, ILogger<IndexModel
         }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {
-            logger.LogWarning(exception, "Cannot delete product {ProductId}.", id);
-            SetStatus("The product could not be deleted. Check the MongoDB connection.", "error");
+            logger.LogWarning(exception, "Cannot archive product {ProductId}.", id);
+            SetStatus("The product could not be archived. Check the MongoDB connection.", "error");
         }
 
-        return RedirectToPage(new { Q, Category });
+        return RedirectToPage(new { Q, Category, Archived });
     }
 
     private void SetStatus(string message, string kind) => (StatusMessage, StatusKind) = (message, kind);

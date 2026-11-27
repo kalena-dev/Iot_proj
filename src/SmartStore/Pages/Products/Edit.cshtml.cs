@@ -63,7 +63,7 @@ public sealed class EditModel(IProductRepository repository, ILogger<EditModel> 
         try
         {
             Product = await repository.GetByIdAsync(id, cancellationToken);
-            return Product is null ? NotFoundRedirect() : null;
+            return Product is null || Product.ArchivedAtUtc != null ? NotFoundRedirect() : null;
         }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {
@@ -76,7 +76,7 @@ public sealed class EditModel(IProductRepository repository, ILogger<EditModel> 
 
     private IActionResult NotFoundRedirect()
     {
-        StatusMessage = "That product no longer exists. It may have been deleted.";
+        StatusMessage = "That product no longer exists or has been archived.";
         StatusKind = "error";
         return RedirectToPage("Index");
     }

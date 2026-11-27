@@ -13,8 +13,8 @@ public sealed class DotEnvLoaderTests
     {
         var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         var originalDirectory = Directory.GetCurrentDirectory();
-        string[] keys = ["MONGODB_ENV_FILE", "XDG_CONFIG_HOME", "NORTHSTAR_TEST_VALUE",
-            "NORTHSTAR_TEST_PROJECT", "NORTHSTAR_TEST_FALLBACK"];
+        string[] keys = ["NORTHSTAR_CONFIG_FILE", "MONGODB_ENV_FILE", "XDG_CONFIG_HOME",
+            "NORTHSTAR_TEST_VALUE", "NORTHSTAR_TEST_PROJECT", "NORTHSTAR_TEST_FALLBACK"];
         var original = keys.ToDictionary(key => key, Environment.GetEnvironmentVariable);
         try
         {
@@ -37,6 +37,45 @@ public sealed class DotEnvLoaderTests
             Environment.SetEnvironmentVariable("NORTHSTAR_TEST_VALUE", "process");
             DotEnvLoader.Load();
             Assert.Equal("process", Environment.GetEnvironmentVariable("NORTHSTAR_TEST_VALUE"));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalDirectory);
+            foreach (var (key, value) in original) Environment.SetEnvironmentVariable(key, value);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IsolatedRoleConfiguration_NeverImportsSharedFallbackSecrets(bool missing)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var originalDirectory = Directory.GetCurrentDirectory();
+        string[] keys = ["NORTHSTAR_CONFIG_FILE", "MONGODB_ENV_FILE", "XDG_CONFIG_HOME",
+            "NORTHSTAR_TEST_ROLE", "NORTHSTAR_TEST_SHARED"];
+        var original = keys.ToDictionary(key => key, Environment.GetEnvironmentVariable);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(directory, "config", "northstar"));
+            Directory.SetCurrentDirectory(directory);
+            var roleFile = Path.Combine(directory, "fan.env");
+            if (!missing) File.WriteAllText(roleFile, "NORTHSTAR_TEST_ROLE=fan\n");
+            File.WriteAllText(".env", "NORTHSTAR_TEST_SHARED=database-secret\n");
+            File.WriteAllText(Path.Combine(directory, "config", "northstar", "credentials.env"),
+                "NORTHSTAR_TEST_SHARED=mail-secret\n");
+            foreach (var key in keys) Environment.SetEnvironmentVariable(key, null);
+            Environment.SetEnvironmentVariable("NORTHSTAR_CONFIG_FILE", roleFile);
+            Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", Path.Combine(directory, "config"));
+
+            if (missing) Assert.Throws<FileNotFoundException>(() => DotEnvLoader.Load());
+            else
+            {
+                Assert.Equal(roleFile, DotEnvLoader.Load());
+                Assert.Equal("fan", Environment.GetEnvironmentVariable("NORTHSTAR_TEST_ROLE"));
+            }
+            Assert.Null(Environment.GetEnvironmentVariable("NORTHSTAR_TEST_SHARED"));
         }
         finally
         {

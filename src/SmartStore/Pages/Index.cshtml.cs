@@ -78,7 +78,7 @@ public sealed class IndexModel : PageModel
         }
         catch (Exception exception)
         {
-            _logger.LogError(exception, "Failed to add customer {Email}.", customer.Email);
+            _logger.LogError("Customer registration failed ({ErrorType}).", exception.GetType().Name);
             StatusMessage = "The customer could not be saved. Check the MongoDB connection and try again.";
             StatusKind = "error";
         }

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -40,6 +41,8 @@ public sealed class RefrigeratorsTests
         Assert.Equal(HttpMethod.Put, handler.LastRequest!.Method);
         Assert.Equal("/api/refrigerators/Frig2/threshold", handler.LastRequest.RequestUri!.AbsolutePath);
         Assert.Contains("24", handler.Body);
+        using var body = System.Text.Json.JsonDocument.Parse(handler.Body!);
+        Assert.Equal("11111111111111111111111111111111", body.RootElement.GetProperty("actor").GetProperty("id").GetString());
     }
 
     [Fact]
@@ -60,6 +63,8 @@ public sealed class RefrigeratorsTests
         Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
         Assert.Equal("/api/fan", handler.LastRequest.RequestUri!.AbsolutePath);
         Assert.Contains("true", handler.Body);
+        using var body = System.Text.Json.JsonDocument.Parse(handler.Body!);
+        Assert.Equal("11111111111111111111111111111111", body.RootElement.GetProperty("actor").GetProperty("id").GetString());
     }
 
     [Fact]
@@ -75,7 +80,11 @@ public sealed class RefrigeratorsTests
     {
         var client = new IotServiceClient(new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:3100/") });
         var page = new RefrigeratorsModel(client, NullLogger<RefrigeratorsModel>.Instance);
-        page.PageContext.HttpContext = new DefaultHttpContext();
+        page.PageContext.HttpContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+                [new Claim(ClaimTypes.NameIdentifier, "11111111111111111111111111111111")], "test"))
+        };
         return page;
     }
 

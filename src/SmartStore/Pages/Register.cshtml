@@ -5,10 +5,10 @@
 }
 
 <section class="panel form-panel account-panel">
-    @if (Model.PendingEmail is { } email)
+    @if (Model.Pending)
     {
         <h1>Verify your email</h1>
-        <p>Enter the code sent to <strong>@email</strong>. The code expires after 15 minutes.</p>
+        <p>If registration can proceed, a code will arrive by email. It expires after 15 minutes. Already registered? Sign in or recover your account.</p>
         <form method="post" asp-page-handler="Verify" class="account-form">
             <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
             <label asp-for="Code">Verification code</label>
@@ -23,9 +23,12 @@
     else
     {
         <h1>Create an account</h1>
-        <p>Use the same email you used for past checkouts to see those purchases and loyalty points.</p>
+        <p>Membership is optional at checkout. Your new account includes a membership number; previous email-only purchases are not automatically attached.</p>
         <form method="post" class="account-form">
             <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
+            <label asp-for="FullName">Full name</label>
+            <input asp-for="FullName" autocomplete="name" maxlength="100" required />
+            <span asp-validation-for="FullName" class="field-error"></span>
             <label asp-for="Email"></label>
             <input asp-for="Email" type="email" autocomplete="username" maxlength="254" required />
             <span asp-validation-for="Email" class="field-error"></span>
@@ -35,6 +38,6 @@
             <span asp-validation-for="Password" class="field-error"></span>
             <button type="submit" class="primary-button">Send verification code</button>
         </form>
-        <p>Already have an account? <a asp-page="/Login">Sign in</a></p>
+        <p>Already have an account? <a asp-page="/Login">Sign in</a> · <a asp-page="/Recover">Recover account</a></p>
     }
 </section>

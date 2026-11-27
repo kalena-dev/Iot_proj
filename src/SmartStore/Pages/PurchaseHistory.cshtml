@@ -45,17 +45,18 @@
 {
     <section class="panel products-panel customer-history">
         <div class="panel__heading"><h2>Product purchase and price history</h2></div>
+        <p>Showing the receipts on this page. Use the history page controls above for earlier purchases.</p>
         @if (Model.ProductPurchases.Count == 0)
         {
             <p class="management-empty">No matching purchases in this period.</p>
         }
-        @foreach (var group in Model.ProductPurchases.GroupBy(purchase => purchase.Item.Code))
+        @foreach (var group in Model.ProductPurchases.GroupBy(purchase => purchase.Item.ProductKey))
         {
             var prices = group.Reverse().Select(purchase => new CustomerChartPoint(
                 purchase.PurchasedAtUtc.ToLocalTime().ToString("g"), purchase.Item.Price)).ToArray();
             <div class="customer-price-history">
-                <h3>@group.First().Item.Name (@group.Key)</h3>
-                <p>@group.Count() purchase(s) · @group.Sum(purchase => purchase.Item.Quantity) unit(s)</p>
+                <h3>@group.First().Item.Name (@group.First().Item.Code)</h3>
+                <p>@group.Count() purchase(s) on this page · @group.Sum(purchase => purchase.Item.Quantity) unit(s)</p>
                 <div class="table-scroll" role="region" aria-label="@($"Purchases of {group.First().Item.Name}")" tabindex="0">
                     <table class="products-table">
                         <thead>

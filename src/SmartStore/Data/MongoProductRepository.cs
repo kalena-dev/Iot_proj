@@ -45,8 +45,8 @@ public sealed partial class MongoProductRepository : IProductRepository
         var value = upc.Trim();
         if (value.Length == 0) return null;
         var query = session is null
-            ? _products.Find(p => p.Upc == value)
-            : _products.Find(session, p => p.Upc == value);
+            ? _products.Find(p => p.Upc == value && p.ArchivedAtUtc == null)
+            : _products.Find(session, p => p.Upc == value && p.ArchivedAtUtc == null);
         return await query.FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -126,7 +126,7 @@ public sealed partial class MongoProductRepository : IProductRepository
         {
             await MongoTransaction.RunAsync(_client, async (session, token) =>
             {
-                var old = await _products.FindOneAndUpdateAsync<Product, Product>(session, p => p.Id == product.Id,
+                var old = await _products.FindOneAndUpdateAsync<Product, Product>(session, p => p.Id == product.Id && p.ArchivedAtUtc == null,
                     update, cancellationToken: token) ?? throw new ProductNotFoundException();
                 var oldUpc = old.Upc.ToUpperInvariant();
                 if (oldUpc != product.Upc.ToUpperInvariant())
@@ -142,30 +142,32 @@ public sealed partial class MongoProductRepository : IProductRepository
         }
     }
 
-    public async Task<bool> DeleteAsync(string id, CancellationToken cancellationToken = default)
+    public async Task<bool> ArchiveAsync(string id, CancellationToken cancellationToken = default)
     {
         if (!IsObjectId(id)) return false;
         return await MongoTransaction.RunAsync(_client, async (session, token) =>
         {
-            var result = await _products.DeleteOneAsync(session, p => p.Id == id, cancellationToken: token);
-            await _codes.DeleteManyAsync(session, c => c.ProductId == id, cancellationToken: token);
-            await _items.DeleteManyAsync(session, i => i.ProductId == id, cancellationToken: token);
-            await _receptions.DeleteManyAsync(session, r => r.ProductId == id, cancellationToken: token);
-            return result.DeletedCount == 1;
-        }, "Product deletion", id, cancellationToken);
+            var result = await _products.UpdateOneAsync(session, p => p.Id == id && p.ArchivedAtUtc == null,
+                Builders<Product>.Update.Set(p => p.ArchivedAtUtc, DateTime.UtcNow)
+                    .Set(p => p.UpdatedAtUtc, DateTime.UtcNow), cancellationToken: token);
+            token.ThrowIfCancellationRequested();
+            return result.ModifiedCount == 1;
+        }, "Product archival", id, cancellationToken);
     }
 
     public async Task<Product> ReceiveStockAsync(Reception reception, CancellationToken cancellationToken = default)
     {
         var untagged = reception.Quantity;
-        if (untagged < 0) throw new InvalidOperationException("Untagged units can't be negative.");
+        if (untagged is < 0 or > 9999) throw new InvalidOperationException("Untagged units must be between 0 and 9999.");
         var requested = new List<string>();
         foreach (var entry in reception.Epcs)
         {
             var epc = Item.NormalizeEpc(entry)
-                ?? throw new InvalidOperationException($"\"{entry}\" is not a valid EPC (4–128 hexadecimal characters).");
+                ?? throw new InvalidOperationException($"\"{entry}\" is not a valid EPC (4–24 hexadecimal characters in whole bytes).");
             if (!requested.Contains(epc)) requested.Add(epc);
         }
+        if (requested.Count > ReceptionInput.MaxTags)
+            throw new InvalidOperationException($"Receive at most {ReceptionInput.MaxTags} tags at a time.");
         if (requested.Count == 0 && untagged < 1)
             throw new InvalidOperationException("Scan at least one RFID tag or enter a number of untagged units.");
         if (!IsObjectId(reception.ProductId)) throw new ProductNotFoundException();
@@ -179,7 +181,7 @@ public sealed partial class MongoProductRepository : IProductRepository
             {
                 // Lock the product first so a concurrent sale or deletion conflicts with this delivery.
                 var product = await _products.FindOneAndUpdateAsync<Product, Product>(session,
-                    p => p.Id == reception.ProductId,
+                    p => p.Id == reception.ProductId && p.ArchivedAtUtc == null,
                     Builders<Product>.Update.Set(p => p.UpdatedAtUtc, DateTime.UtcNow),
                     cancellationToken: token) ?? throw new ProductNotFoundException();
 
@@ -196,20 +198,22 @@ public sealed partial class MongoProductRepository : IProductRepository
                 }
                 var known = existing.Select(i => i.Epc).ToHashSet(StringComparer.Ordinal);
                 var fresh = requested.Where(epc => !known.Contains(epc)).ToList();
-                if (fresh.Count > 0)
+                foreach (var epc in fresh)
                 {
-                    var clash = await _codes.Find(session, c => fresh.Contains(c.Code)).FirstOrDefaultAsync(token);
-                    if (clash is not null)
-                        throw new InvalidOperationException($"{clash.Code} is saved as a product barcode, not an RFID tag.");
+                    if (await _products.Find(session, p => p.Upc == epc).AnyAsync(token))
+                        throw new InvalidOperationException($"{epc} is saved as a product barcode, not an RFID tag.");
+                    await ClaimCodeAsync(session, product.Id!, epc, "item", token);
                 }
 
                 var total = fresh.Count + untagged;
-                if (total == 0)
+                if (total == 0 && !existing.Any(IsGuessedSale))
                     throw new InvalidOperationException("Every scanned tag is already in stock. Nothing was received.");
 
                 // Recomputed on each attempt, so a retried transaction never keeps stale values.
                 reception.Epcs = fresh;
                 reception.Quantity = total;
+                if (total == 0)
+                    return product; // Only the guessed-unit corrections commit; no delivery or extra stock is invented.
                 if (fresh.Count > 0)
                 {
                     await _items.InsertManyAsync(session, fresh.Select(epc => new Item
@@ -230,6 +234,10 @@ public sealed partial class MongoProductRepository : IProductRepository
         catch (Exception exception) when (IsDuplicateKey(exception))
         {
             throw new InvalidOperationException("One of these tags was just registered by another delivery. Scan the delivery again.");
+        }
+        catch (DuplicateProductCodeException exception)
+        {
+            throw new InvalidOperationException("One of these EPCs is reserved as a product code. No units were received.", exception);
         }
     }
 
@@ -270,6 +278,8 @@ public sealed partial class MongoProductRepository : IProductRepository
                 var removed = await _items.DeleteManyAsync(session, i => reception.Epcs.Contains(i.Epc) &&
                     i.ProductId == reception.ProductId && i.Status == Item.InStock, cancellationToken: token);
                 if (removed.DeletedCount != reception.Epcs.Count) throw new InvalidOperationException(alreadySold);
+                await _codes.DeleteManyAsync(session, c => reception.Epcs.Contains(c.Code) && c.Kind == "item" &&
+                    c.ProductId == reception.ProductId, cancellationToken: token);
             }
             if (!await DecrementStockAsync(session, reception.ProductId, reception.Quantity, token) ||
                 !await StockCoversTagsAsync(session, reception.ProductId, token))
@@ -309,10 +319,13 @@ public sealed partial class MongoProductRepository : IProductRepository
             if (item.ProductId == productId && IsGuessedSale(item))
                 await ReclaimGuessedAsync(session, item, scanned, cancellationToken);
 
-        // A barcode says which product, not which unit: retire the oldest tags first (first in, first out).
-        var guessed = quantity == scanned.Count ? [] : await _items
+        var product = await _products.Find(session, p => p.Id == productId && p.ArchivedAtUtc == null)
+            .FirstOrDefaultAsync(cancellationToken) ?? throw new ProductNotFoundException();
+        var untagged = Math.Max(0, product.QuantityInStock - (int)await CountTaggedAsync(session, productId, cancellationToken));
+        var guessesNeeded = Math.Max(0, quantity - scanned.Count - untagged);
+        var guessed = guessesNeeded == 0 ? [] : await _items
             .Find(session, i => i.ProductId == productId && i.Status == Item.InStock && !scanned.Contains(i.Epc))
-            .SortBy(i => i.ReceivedAtUtc).ThenBy(i => i.Epc).Limit(quantity - scanned.Count)
+            .SortBy(i => i.ReceivedAtUtc).ThenBy(i => i.Epc).Limit(guessesNeeded)
             .Project(i => i.Epc).ToListAsync(cancellationToken);
 
         await SellAsync(session, productId, quantity, [.. scanned, .. guessed], saleId, cancellationToken);
@@ -322,16 +335,46 @@ public sealed partial class MongoProductRepository : IProductRepository
         return [.. scanned, .. guessed];
     }
 
-    private static bool IsGuessedSale(Item item) => item.Status == Item.Sold && item.SoldBy == Item.SoldByGuess;
+    private static bool IsGuessedSale(Item item) => item.Status == Item.Sold &&
+        item.SoldBy == Item.SoldByGuess && item.SaleId != null && item.SoldAtUtc != null;
 
-    // Puts a guessed-sold tag back in stock and moves the earlier sale's guess to another in-stock unit of the
-    // product (oldest first, never one in keep). With no tag left, the earlier sale is counted as an untagged unit.
-    // Stock does not change: the earlier sale still removed one unit, only which unit is corrected.
+    public async Task<bool> CanCheckoutItemAsync(Item? item, CancellationToken token, IClientSessionHandle? session = null)
+    {
+        if (item is null || Item.NormalizeEpc(item.Epc) is null) return false;
+        var query = session is null ? _products.Find(p => p.Id == item.ProductId && p.ArchivedAtUtc == null)
+            : _products.Find(session, p => p.Id == item.ProductId && p.ArchivedAtUtc == null);
+        var product = await query.FirstOrDefaultAsync(token);
+        if (product is null || product.QuantityInStock < 1) return false;
+        if (item.Status == Item.InStock) return true;
+        if (!IsGuessedSale(item)) return false;
+        var replacementFilter = ReplacementFilter(item, [item.Epc]);
+        if (await (session is null ? _items.Find(replacementFilter) : _items.Find(session, replacementFilter)).AnyAsync(token))
+            return true;
+        return await HistoricalUntaggedAsync(product, item.SoldAtUtc!.Value, token, session) > 0;
+    }
+
+    private static FilterDefinition<Item> ReplacementFilter(Item item, IReadOnlyCollection<string> keep) =>
+        Builders<Item>.Filter.Where(i => i.ProductId == item.ProductId && i.Status == Item.InStock &&
+            !keep.Contains(i.Epc) && i.ReceivedAtUtc <= item.SoldAtUtc);
+
+    // New deliveries cannot retroactively supply an earlier sale. Only provably pre-existing untagged units
+    // are eligible; ambiguous legacy inventory is left unchanged rather than silently rewriting history.
+    private async Task<long> HistoricalUntaggedAsync(Product product, DateTime cutoff, CancellationToken token,
+        IClientSessionHandle? session = null)
+    {
+        var tags = await CountTaggedInStockAsync(product.Id!, token, session);
+        var aggregate = session is null ? _receptions.Aggregate() : _receptions.Aggregate(session);
+        var newer = await aggregate.Match(r => r.ProductId == product.Id && r.CreatedAtUtc > cutoff)
+            .Group(_ => 1, g => new { Units = g.Sum(r => (long)r.Quantity - r.Epcs.Count) }).FirstOrDefaultAsync(token);
+        return product.QuantityInStock - tags - (newer?.Units ?? 0);
+    }
+
+    // Corrections move a guess, not the original receipt, stock count, or confirmed scan.
     private async Task ReclaimGuessedAsync(IClientSessionHandle session, Item item, IReadOnlyCollection<string> keep,
         CancellationToken token)
     {
         var replacement = await _items
-            .Find(session, i => i.ProductId == item.ProductId && i.Status == Item.InStock && !keep.Contains(i.Epc))
+            .Find(session, ReplacementFilter(item, keep))
             .SortBy(i => i.ReceivedAtUtc).ThenBy(i => i.Epc).FirstOrDefaultAsync(token);
         if (replacement is not null)
         {
@@ -344,9 +387,10 @@ public sealed partial class MongoProductRepository : IProductRepository
         else
         {
             var product = await _products.Find(session, p => p.Id == item.ProductId).FirstOrDefaultAsync(token);
-            if (product is null || product.QuantityInStock <= await CountTaggedAsync(session, item.ProductId, token))
+            if (product is null || !IsGuessedSale(item) ||
+                await HistoricalUntaggedAsync(product, item.SoldAtUtc!.Value, token, session) < 1)
                 throw new InvalidOperationException(
-                    $"Tag {item.Epc} is marked as sold, and no other unit of this product is left to take its place.");
+                    $"Tag {item.Epc} is marked as sold, and no eligible unit received before that sale can take its place.");
         }
 
         var reopened = await _items.UpdateOneAsync(session,
@@ -364,7 +408,7 @@ public sealed partial class MongoProductRepository : IProductRepository
             throw new InvalidOperationException("Stock changes must join an active transaction.");
         if (quantity < 1 || !IsObjectId(productId)) return false;
         var result = await _products.UpdateOneAsync(session,
-            p => p.Id == productId && p.QuantityInStock >= quantity,
+            p => p.Id == productId && p.ArchivedAtUtc == null && p.QuantityInStock >= quantity,
             Builders<Product>.Update
                 .Inc(p => p.QuantityInStock, -quantity)
                 .Set(p => p.UpdatedAtUtc, DateTime.UtcNow),

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 
-function setup(mode = 'simulation', tags = [], codes = new Map()) {
+function setup(mode = 'simulation', tags = [], codes = new Map(), controls = {}) {
   class Element {
     constructor(dataset = {}) { this.dataset = dataset; this.children = []; this.handlers = {}; this.value = ''; }
     addEventListener(name, fn) { this.handlers[name] = fn; }
@@ -13,7 +13,7 @@ function setup(mode = 'simulation', tags = [], codes = new Map()) {
     setAttribute(name, value) { this[name] = value; }
     click() { return this.handlers.click(); }
   }
-  const selectors = Object.fromEntries(['#item-code', '#barcode-match', '#barcode-product', '#scan-error', '#cart-list', '#cart-total', '#checkout-button', '#rfid-scan', '#rfid-status', '#Cart', '#add-coupon', '#checkout-coupons', '#CouponId', '#coupon-breakdown', '#coupon-label', '#cart-subtotal', '#cart-discount', '.rfid-scanner'].map(s => [s, new Element()]));
+  const selectors = Object.fromEntries(['#item-code', '#barcode-match', '#barcode-product', '#scan-error', '#cart-list', '#cart-total', '#checkout-button', '#checkout-form', '#AttemptId', '#pair-reader', '#close-reader', '#rfid-scan', '#rfid-status', '#Cart', '#add-coupon', '#checkout-coupons', '#CouponId', '#coupon-breakdown', '#coupon-label', '#cart-subtotal', '#cart-discount', '.rfid-scanner'].map(s => [s, new Element()]));
   selectors['#barcode-match'].hidden = true;
   selectors['#checkout-coupons'].hidden = true;
   selectors['#CouponId'].selectedOptions = [];
@@ -23,6 +23,8 @@ function setup(mode = 'simulation', tags = [], codes = new Map()) {
   codes.set('E2801191A503006599BFD10D', {code:'1002', isTag:true});
   selectors['.rfid-scanner'].dataset = {mode, session: 'private-session'};
   const products = ['1001', '1002'].map(code => new Element({code, name: code, price: '1.00', stock: '3'}));
+  const lookups = [];
+  const actions = [];
   let nextPoll;
   const details = new Map();
   const document = { getElementById: id => {
@@ -31,12 +33,21 @@ function setup(mode = 'simulation', tags = [], codes = new Map()) {
   }, querySelector: s => selectors[s], querySelectorAll: () => products, createElement: () => new Element() };
   const context = {document, Intl, URL, URLSearchParams, window: {location: {href: 'https://store/Checkout'}, setTimeout: fn => {nextPoll = fn;}}, fetch: async (url, options) => {
     if (typeof url === 'string') {
+      if (url.includes('PairRfid') || url.includes('CloseRfid')) {
+        assert.equal(options.headers['X-Rfid-Session'], 'private-session');
+        assert.equal(options.body.get('__RequestVerificationToken'), 'csrf-token');
+        actions.push(url);
+        return {ok: true, status: 200};
+      }
       if (url.includes('AssignCode')) {
         assert.equal(options.body.get('__RequestVerificationToken'), 'csrf-token');
         codes.set(options.body.get('code').toUpperCase(), {code:options.body.get('upc'), isTag:false});
         return {ok:true, json:async () => codes.get(options.body.get('code').toUpperCase())};
       }
       const key = new URL(url, 'https://store/Checkout').searchParams.get('code').toUpperCase();
+      lookups.push(key);
+      if (controls.lookupGate) await controls.lookupGate(key);
+      if (controls.rejectedCodes?.includes(key)) return {ok: false, status: 409};
       return {ok:codes.has(key), status:codes.has(key) ? 200 : 404, json:async () => codes.get(key)};
     }
     assert.equal(options.headers['X-Rfid-Session'], 'private-session');
@@ -44,7 +55,7 @@ function setup(mode = 'simulation', tags = [], codes = new Map()) {
     return {ok: true, status: 200, json: async () => tags};
   }};
   vm.runInNewContext(fs.readFileSync('src/SmartStore/wwwroot/js/checkout.js', 'utf8'), context);
-  return {selectors, cart: () => JSON.parse(selectors['#Cart'].value), poll: () => nextPoll()};
+  return {selectors, lookups, actions, cart: () => JSON.parse(selectors['#Cart'].value), poll: () => nextPoll()};
 }
 
 test('manual input retains stock limits and removals', async () => {
@@ -147,4 +158,69 @@ test('selecting and removing a loyalty coupon updates the cart totals', () => {
   coupon.handlers.change();
   assert.equal(selectors['#coupon-breakdown'].hidden, true);
   assert.equal(selectors['#cart-total'].textContent, '$3.00');
+});
+
+test('consecutive scans queue while inventory lookup waits and never erase subsequent input', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ui = setup('simulation', [], new Map(), {lookupGate: code => code === '1001' ? gate : Promise.resolve()});
+  const input = ui.selectors['#item-code'];
+  input.value = '1001';
+  const first = input.handlers.keydown({key: 'Enter', preventDefault() {}});
+  input.value = '1002';
+  const second = input.handlers.keydown({key: 'Enter', preventDefault() {}});
+  input.value = 'unfinished';
+  assert.equal(ui.selectors['#checkout-button'].disabled, true);
+  let prevented = false;
+  ui.selectors['#checkout-form'].handlers.submit({preventDefault() { prevented = true; }});
+  assert.equal(prevented, true);
+  release();
+  await Promise.all([first, second]);
+  assert.deepEqual(ui.cart(), {'1001': 1, '1002': 1});
+  assert.deepEqual(ui.lookups, ['1001', '1002']);
+  assert.equal(input.value, 'unfinished');
+  assert.equal(ui.selectors['#checkout-button'].disabled, false);
+});
+
+test('tag removal names the exact EPC even when another tag was added later', async () => {
+  const ui = setup('reader', [{epc: 'AABB', code: '1001'}, {epc: 'CCDD', code: '1001', source: 'manual'}]);
+  await new Promise(resolve => setImmediate(resolve));
+  const buttons = ui.selectors['#cart-list'].children[0].children.slice(1);
+  assert.match(buttons.find(button => button.textContent.includes('AABB')).textContent, /reader-origin event/);
+  assert.match(buttons.find(button => button.textContent.includes('CCDD')).textContent, /manual transfer/);
+  buttons.find(button => button.textContent.includes('AABB')).click();
+  assert.deepEqual(ui.cart(), {'CCDD': 1});
+  await ui.poll();
+  assert.deepEqual(ui.cart(), {'CCDD': 1});
+});
+
+test('manual EPC entry is identified as manual and an unavailable tag is rejected before checkout', async () => {
+  const ui = setup('simulation', [], new Map(), {rejectedCodes: ['DEAD']});
+  const input = ui.selectors['#item-code'];
+  input.value = 'E2801191A503006599BFD10D';
+  await input.handlers.keydown({key: 'Enter', preventDefault() {}});
+  assert.match(ui.selectors['#cart-list'].children[0].children[1].textContent, /manual entry/);
+  input.value = 'DEAD';
+  await input.handlers.keydown({key: 'Enter', preventDefault() {}});
+  assert.deepEqual(ui.cart(), {'E2801191A503006599BFD10D': 1});
+  assert.match(ui.selectors['#scan-error'].textContent, /not available/);
+});
+
+test('pairing is an explicit antiforgery POST and never automatic on page open', async () => {
+  const ui = setup('reader');
+  assert.deepEqual(ui.actions, []);
+  await ui.selectors['#pair-reader'].click();
+  await ui.selectors['#close-reader'].click();
+  assert.deepEqual(ui.actions, ['?handler=PairRfid', '?handler=CloseRfid']);
+});
+
+test('repeat form submission is blocked after one logical attempt starts', async () => {
+  const ui = setup();
+  ui.selectors['#rfid-scan'].click();
+  let prevented = false;
+  ui.selectors['#checkout-form'].handlers.submit({preventDefault() { prevented = true; }});
+  assert.equal(prevented, false);
+  assert.equal(ui.selectors['#checkout-button'].disabled, true);
+  ui.selectors['#checkout-form'].handlers.submit({preventDefault() { prevented = true; }});
+  assert.equal(prevented, true);
 });

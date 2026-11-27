@@ -8,12 +8,15 @@ namespace SmartStore.Data;
 public interface IProductRepository
 {
     /// <summary>
-    /// Resolves a scanned code: a registered item EPC (IsTag, whatever its status),
-    /// a saved barcode alias, or a UPC.
+    /// Resolves a registered item EPC, saved barcode alias, or active product UPC.
+    /// Call CanCheckoutItemAsync before adding an EPC to checkout; resolution is not sale eligibility.
     /// </summary>
     Task<(Product Product, bool IsTag)?> ResolveCodeAsync(string code, CancellationToken token, IClientSessionHandle? session = null);
 
     Task<Item?> FindItemAsync(string epc, CancellationToken token, IClientSessionHandle? session = null);
+
+    /// <summary>Checks current stock and whether a guessed sale has a historically eligible replacement.</summary>
+    Task<bool> CanCheckoutItemAsync(Item? item, CancellationToken token, IClientSessionHandle? session = null);
 
     /// <summary>Items of one product (or all products when null), newest first.</summary>
     Task<List<Item>> ListItemsAsync(string? productId, string? status, int count, CancellationToken token);
@@ -46,8 +49,8 @@ public interface IProductRepository
     /// <exception cref="ProductNotFoundException">The product no longer exists.</exception>
     Task UpdateAsync(Product product, CancellationToken cancellationToken = default);
 
-    /// <summary>Deletes the product, its items and its reception history. Returns false if it did not exist.</summary>
-    Task<bool> DeleteAsync(string id, CancellationToken cancellationToken = default);
+    /// <summary>Archives the product, retaining its identifiers, items, stock and receiving history.</summary>
+    Task<bool> ArchiveAsync(string id, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Records a delivery in one transaction: registers each new EPC in <see cref="Reception.Epcs"/> as an
@@ -93,10 +96,9 @@ public interface IProductRepository
         string saleId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Sells <paramref name="quantity"/> units like <see cref="SellAsync"/>, but when fewer tags were scanned
-    /// than units bought (barcode scans), the remaining units are taken from the product's in-stock tags,
-    /// oldest received first, before any untagged stock, and marked as guesses. A scanned tag that an earlier sale
-    /// only guessed is reclaimed and that sale's guess moves to another unit. Returns every EPC marked as sold.
+    /// Sells units within the caller's transaction. For barcode units, untagged stock is consumed first,
+    /// then in-stock tags oldest first, marked as guesses. A scanned guessed tag is reclaimed using a
+    /// replacement received no later than the original sale. Returns every EPC marked as sold.
     /// </summary>
     /// <exception cref="InvalidOperationException">A tag was already sold or stock changed.</exception>
     Task<IReadOnlyList<string>> SellOldestFirstAsync(IClientSessionHandle session, string productId, int quantity,

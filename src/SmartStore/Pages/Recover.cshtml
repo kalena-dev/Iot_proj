@@ -1,0 +1,35 @@
+@page
+@model RecoverModel
+@{ ViewData["Title"] = "Recover account"; }
+<section class="panel form-panel account-panel">
+    <h1>Recover account</h1>
+    @if (Model.Completed)
+    {
+        <p>Your password was changed and all existing sessions were signed out. <a asp-page="/Login">Sign in again</a>.</p>
+    }
+    else if (Model.Pending)
+    {
+        <p>If the account is eligible, a code will arrive by email. It expires after 15 minutes.</p>
+        <form method="post" asp-page-handler="Verify" class="account-form">
+            <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
+            <label asp-for="Code">Recovery code</label>
+            <input asp-for="Code" autocomplete="one-time-code" spellcheck="false" maxlength="32" required />
+            <label asp-for="Password">New password</label>
+            <input asp-for="Password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+            <span asp-validation-for="Password" class="field-error"></span>
+            <button type="submit" class="primary-button">Change password and sign out all sessions</button>
+        </form>
+        <form method="post" asp-page-handler="Restart"><button type="submit" class="account-text-button">Start again</button></form>
+    }
+    else
+    {
+        <p>Request a code for your registered email. Disabled accounts need staff assistance.</p>
+        <form method="post" class="account-form">
+            <label asp-for="Email"></label>
+            <input asp-for="Email" type="email" autocomplete="username" maxlength="254" required />
+            <span asp-validation-for="Email" class="field-error"></span>
+            <button type="submit" class="primary-button">Send recovery code</button>
+        </form>
+    }
+    <p><a asp-page="/Login">Sign in</a></p>
+</section>

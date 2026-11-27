@@ -13,6 +13,15 @@ public sealed class RecordsModel(StoreDemo store) : PageModel
     public List<DemoSale> Sales { get; private set; } = [];
     public List<EmailLog> Emails { get; private set; } = [];
     public bool HasNext { get; private set; }
+    public static string DisplaySubject(EmailLog email) => email.Kind == "receipt" ? email.Subject
+        : email.Kind.Replace('-', ' ') + " (details hidden)";
+
+    public static string MaskEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return "Guest";
+        var at = email.IndexOf('@');
+        return at < 1 ? "Hidden" : email[..1] + "***" + email[at..];
+    }
 
     public async Task<IActionResult> OnGetAsync(CancellationToken token)
     {

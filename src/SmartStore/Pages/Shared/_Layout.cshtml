@@ -3,7 +3,7 @@
 @{
     var signedIn = User.Identity?.IsAuthenticated == true;
     var isStaff = StoreAccounts.IsStaff(User, Configuration);
-    var homePage = isStaff ? "/Management" : signedIn ? "/Checkout" : "/Login";
+    var homePage = isStaff ? "/Management" : "/Checkout";
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -39,6 +39,7 @@
                 }
                 else
                 {
+                    <a asp-page="/Checkout">Guest checkout</a>
                     <a asp-page="/Login">Sign in</a>
                     <a asp-page="/Register">Create account</a>
                 }
@@ -65,6 +66,11 @@
                                 <span>@StoreAccounts.EmailOf(User)</span>
                             </div>
                             <a asp-page="/Profile">My account</a>
+                            <a asp-page="/AccountSecurity">Account security</a>
+                            @if (isStaff)
+                            {
+                                <a asp-page="/StaffAccounts">Account administration</a>
+                            }
                             <form method="post" asp-page="/Logout">
                                 <button type="submit">Sign out</button>
                             </form>

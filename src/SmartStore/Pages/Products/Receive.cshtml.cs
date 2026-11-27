@@ -10,6 +10,7 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
 {
     [BindProperty] public ReceptionInput Input { get; set; } = new();
     [BindProperty(SupportsGet = true)] public string? Code { get; set; }
+    [BindProperty] public string? ReaderSession { get; set; }
 
     public IReadOnlyList<Product> AllProducts { get; private set; } = [];
     public Product? Selected { get; private set; }
@@ -23,7 +24,7 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
     [TempData] public string? StatusMessage { get; set; }
     [TempData] public string? StatusKind { get; set; }
 
-    public async Task<IActionResult> OnGetAsync(string? id, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnGetAsync(string? id, CancellationToken cancellationToken, string? rfidSession = null)
     {
         try
         {
@@ -45,10 +46,10 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
                 SetStatus("That product no longer exists. It may have been deleted.", "error");
                 return RedirectToPage(new { id = (string?)null });
             }
-            if (Selected is not null)
+            if (Selected is { ArchivedAtUtc: null })
             {
                 Input.ProductId = Selected.Id!;
-                RfidSession = rfid.PairLocal(HttpContext, receiving: true);
+                RfidSession = OpenReaderSession(rfidSession);
             }
         }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
@@ -62,8 +63,22 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
     public IActionResult OnGetRfid()
     {
         Response.Headers.CacheControl = "no-store";
-        var tags = rfid.Read(Request.Headers["X-Rfid-Session"].ToString(), receiving: true);
-        return tags is null ? NotFound() : new JsonResult(tags.Select(tag => tag.Epc));
+        var tags = rfid.Read(HttpContext, Request.Headers["X-Rfid-Session"].ToString(), receiving: true);
+        return tags is null ? NotFound() : new JsonResult(tags);
+    }
+
+    public IActionResult OnPostPairRfid()
+    {
+        Response.Headers.CacheControl = "no-store";
+        return rfid.PairReader(HttpContext, Request.Headers["X-Rfid-Session"].ToString(), receiving: true)
+            ? new JsonResult(new { paired = true })
+            : StatusCode(StatusCodes.Status409Conflict, new { error = "The reader is paired elsewhere. Release that session first." });
+    }
+
+    public IActionResult OnPostCloseRfid()
+    {
+        return rfid.Close(HttpContext, Request.Headers["X-Rfid-Session"].ToString(), receiving: true)
+            ? new JsonResult(new { closed = true }) : NotFound();
     }
 
     public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
@@ -76,7 +91,7 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
         var (epcs, invalid) = Input.ParseTags();
         if (invalid.Count > 0)
             ModelState.AddModelError("Input.Tags", $"Not a valid RFID tag (EPC): {string.Join(", ", invalid.Take(3))}. " +
-                "An EPC is 4–128 hexadecimal characters in whole bytes.");
+                "An EPC is 4–24 hexadecimal characters in whole bytes.");
         else if (epcs.Count > ReceptionInput.MaxTags)
             ModelState.AddModelError("Input.Tags", $"Receive at most {ReceptionInput.MaxTags} tags at a time.");
         else if (epcs.Count == 0 && (Input.Quantity ?? 0) < 1)
@@ -92,8 +107,11 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
                 var parts = new List<string>();
                 if (reception.Epcs.Count > 0) parts.Add($"{reception.Epcs.Count} tagged");
                 if (Input.Quantity is > 0) parts.Add($"{Input.Quantity} untagged");
-                SetStatus($"Received {reception.Quantity} × {product.Name} ({string.Join(", ", parts)}). Stock is now {product.QuantityInStock}." +
-                    (skipped > 0 ? $" {skipped} tag(s) were already in stock and were skipped." : ""), "success");
+                SetStatus(reception.Quantity == 0
+                    ? $"Corrected the previously guessed tag(s) for {product.Name}. No delivery or additional stock was recorded."
+                    : $"Received {reception.Quantity} × {product.Name} ({string.Join(", ", parts)}). Stock is now {product.QuantityInStock}." +
+                        (skipped > 0 ? $" {skipped} existing tag(s) were checked; only new units were added." : ""), "success");
+                CloseReaderAfterSave();
                 return RedirectToPage(new { id = product.Id });
             }
         }
@@ -121,7 +139,8 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
         try
         {
             await LoadAsync(Input.ProductId, cancellationToken);
-            if (Selected is not null) RfidSession = rfid.PairLocal(HttpContext, receiving: true);
+            if (Selected is { ArchivedAtUtc: null }) RfidSession = OpenReaderSession(
+                existingToken: Request.Query["rfidSession"].ToString());
         }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {
@@ -139,6 +158,7 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
                 ? "Delivery removed, its tags unregistered and stock adjusted."
                 : "That delivery was already removed.",
                 "success");
+            CloseReaderAfterSave();
         }
         catch (InvalidOperationException exception)
         {
@@ -154,12 +174,32 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
 
     private async Task LoadAsync(string? id, CancellationToken cancellationToken)
     {
-        AllProducts = await repository.GetAllAsync(cancellationToken);
-        Selected = string.IsNullOrWhiteSpace(id) ? null : AllProducts.FirstOrDefault(p => p.Id == id);
+        AllProducts = (await repository.GetAllAsync(cancellationToken)).Where(p => p.ArchivedAtUtc == null).ToArray();
+        Selected = string.IsNullOrWhiteSpace(id) ? null : await repository.GetByIdAsync(id, cancellationToken);
         if (Selected is null) return;
         History = await repository.GetReceptionsAsync(Selected.Id!, 50, cancellationToken);
         TaggedInStock = await repository.CountTaggedInStockAsync(Selected.Id!, cancellationToken);
         TaggedItems = await repository.ListItemsAsync(Selected.Id!, Item.InStock, 25, cancellationToken);
+    }
+
+    private string OpenReaderSession(string? existingToken)
+    {
+        try { return rfid.Open(HttpContext, receiving: true, existingToken: existingToken); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            logger.LogWarning(exception, "Reader session is unavailable; manual receiving remains available.");
+            return "";
+        }
+    }
+
+    private void CloseReaderAfterSave()
+    {
+        try { rfid.Close(HttpContext, ReaderSession ?? Request.Query["rfidSession"].ToString(), receiving: true); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(exception, "Inventory is saved, but the reader pairing could not be released.");
+            StatusMessage += " The reader pairing could not be released; release it before receiving another delivery.";
+        }
     }
 
     private void SetStatus(string message, string kind) => (StatusMessage, StatusKind) = (message, kind);

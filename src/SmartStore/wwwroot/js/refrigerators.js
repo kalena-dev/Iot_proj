@@ -5,6 +5,15 @@
   const dateText = value => new Date(value).toLocaleString();
   let loading = false;
   let actionBusy = false;
+  let offBusy = false;
+  let fanState = null;
+
+  function updateFanButtons() {
+    fanButtons.forEach(button => {
+      button.disabled = button.value === 'false' ? offBusy
+        : !fanState?.online || fanState.pending !== null || actionBusy || offBusy;
+    });
+  }
 
   function render(data) {
     error.hidden = true;
@@ -37,7 +46,8 @@
     document.getElementById('fan-detail').textContent = fan.pending !== null
       ? `Requested ${fan.pending ? 'ON' : 'OFF'} · awaiting Pi confirmation…`
       : fan.online ? 'Raspberry Pi output confirmed. Stops on disconnect or safety timeout.' : 'No fresh hardware confirmation. Check the fan controller.';
-    fanButtons.forEach(button => { button.disabled = !fan.online || fan.pending !== null || actionBusy; });
+    fanState = fan;
+    updateFanButtons();
     const list = document.getElementById('iot-notifications');
     list.replaceChildren();
     for (const notification of data.notifications) {
@@ -73,7 +83,8 @@
       });
       document.getElementById('fan-state').textContent = 'UNKNOWN';
       document.getElementById('fan-icon').classList.remove('is-running');
-      fanButtons.forEach(button => { button.disabled = true; });
+      fanState = null;
+      updateFanButtons();
     } finally { loading = false; }
   }
   document.querySelectorAll('.threshold-form input[name="threshold"]').forEach(input => {
@@ -82,12 +93,15 @@
   document.querySelectorAll('.threshold-form, #fan-form').forEach(form => {
     form.addEventListener('submit', async event => {
       event.preventDefault();
-      if (actionBusy) return;
-      actionBusy = true;
+      const stopping = form.id === 'fan-form' && event.submitter?.value === 'false';
+      if (stopping ? offBusy : actionBusy || offBusy) return;
+      if (stopping) offBusy = true;
+      else actionBusy = true;
       const buttons = form.querySelectorAll('button');
       const body = new FormData(form);
       if (event.submitter?.name) body.set(event.submitter.name, event.submitter.value);
-      buttons.forEach(button => { button.disabled = true; });
+      if (form.id !== 'fan-form') buttons.forEach(button => { button.disabled = true; });
+      updateFanButtons();
       const message = document.getElementById('action-message');
       try {
         const response = await fetch(form.action, { method: 'POST', body, signal: AbortSignal.timeout(15000) });
@@ -97,7 +111,13 @@
         const input = form.querySelector('input[name="threshold"]');
         if (input) delete input.dataset.edited;
       } catch (exception) { message.textContent = exception.message; }
-      finally { actionBusy = false; buttons.forEach(button => { button.disabled = false; }); await refresh(); }
+      finally {
+        if (stopping) offBusy = false;
+        else actionBusy = false;
+        if (form.id !== 'fan-form') buttons.forEach(button => { button.disabled = false; });
+        updateFanButtons();
+        await refresh();
+      }
     });
   });
   void refresh();

@@ -5,18 +5,35 @@
 }
 
 <section class="panel form-panel account-panel">
-    <h1>Sign in</h1>
-    <p>Use your Northstar account to check out and view your purchases.</p>
-    <form method="post" class="account-form">
-        <input type="hidden" asp-for="ReturnUrl" />
-        <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
-        <label asp-for="Email"></label>
-        <input asp-for="Email" type="email" autocomplete="username" maxlength="254" required />
-        <span asp-validation-for="Email" class="field-error"></span>
-        <label asp-for="Password"></label>
-        <input asp-for="Password" type="password" autocomplete="current-password" maxlength="128" required />
-        <span asp-validation-for="Password" class="field-error"></span>
-        <button type="submit" class="primary-button">Sign in</button>
-    </form>
+    @if (Model.Pending)
+    {
+        <h1>Verify staff sign-in</h1>
+        <p>If verification is available, a code will arrive by email. It expires after 15 minutes.</p>
+        <form method="post" asp-page-handler="Verify" class="account-form">
+            <input type="hidden" asp-for="ReturnUrl" />
+            <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
+            <label asp-for="Code">Verification code</label>
+            <input asp-for="Code" autocomplete="one-time-code" spellcheck="false" maxlength="32" required />
+            <button type="submit" class="primary-button">Verify and sign in</button>
+        </form>
+        <form method="post" asp-page-handler="Restart">
+            <button type="submit" class="account-text-button">Start sign-in again</button>
+        </form>
+    }
+    else
+    {
+        <h1>Sign in</h1>
+        <p>Sign in for membership and purchase history, or use guest checkout.</p>
+        <form method="post" class="account-form">
+            <input type="hidden" asp-for="ReturnUrl" />
+            <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
+            <label asp-for="Email"></label>
+            <input asp-for="Email" type="email" autocomplete="username" maxlength="254" required />
+            <label asp-for="Password"></label>
+            <input asp-for="Password" type="password" autocomplete="current-password" maxlength="128" required />
+            <button type="submit" class="primary-button">Sign in</button>
+        </form>
+    }
+    <p><a asp-page="/Recover">Recover account</a> · <a asp-page="/Checkout">Guest checkout</a></p>
     <p>New to Northstar? <a asp-page="/Register">Create an account</a></p>
 </section>

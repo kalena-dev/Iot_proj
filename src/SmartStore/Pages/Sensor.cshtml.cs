@@ -17,8 +17,9 @@ public sealed class SensorModel(IHttpClientFactory clients, IConfiguration confi
             return new JsonResult(new { status = "Configure the Minew MSP01 device ID to receive readings." });
 
         if (!Uri.TryCreate(configuration["MSP01_PARETO_URL"] ?? "http://127.0.0.1:3001/", UriKind.Absolute, out var baseUrl)
-            || baseUrl.Scheme is not ("http" or "https"))
-            return new JsonResult(new { status = "The Pareto Anywhere URL is invalid." });
+            || baseUrl.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(baseUrl.UserInfo)
+            || baseUrl.Scheme == "http" && !baseUrl.IsLoopback)
+            return new JsonResult(new { status = "Use HTTPS for a remote Pareto Anywhere service." });
 
         var key = $"{deviceId}/{deviceType}";
         try
@@ -42,7 +43,7 @@ public sealed class SensorModel(IHttpClientFactory clients, IConfiguration confi
                         illuminance = Number(readings, "illuminance"),
                         luminousFlux = Number(readings, "luminousFlux"),
                         motion = Motion(readings),
-                        timestamp = Number(readings, "timestamp")
+                        timestamp = ObservationTime(readings)
                     });
                 }
             }
@@ -65,6 +66,15 @@ public sealed class SensorModel(IHttpClientFactory clients, IConfiguration confi
     private static double? Number(JsonElement readings, string name) =>
         TryProperty(readings, name, out var value) && value.ValueKind == JsonValueKind.Number
             && value.TryGetDouble(out var number) && double.IsFinite(number) ? number : null;
+
+    private static double? ObservationTime(JsonElement readings)
+    {
+        var timestamp = Number(readings, "timestamp");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // Pareto timestamps are Unix milliseconds. Seconds and clock errors are not live observations.
+        return timestamp is >= 946684800000 && timestamp <= now + 5000
+            && Math.Truncate(timestamp.Value) == timestamp ? timestamp : null;
+    }
 
     private static bool? Motion(JsonElement readings)
     {

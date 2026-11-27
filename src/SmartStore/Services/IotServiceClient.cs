@@ -8,9 +8,11 @@ public sealed class IotServiceClient(HttpClient client)
     public Task<HttpResponseMessage> StatusAsync(CancellationToken cancellationToken) =>
         client.GetAsync("api/status", cancellationToken);
 
-    public Task<HttpResponseMessage> ThresholdAsync(string fridge, double threshold, CancellationToken cancellationToken) =>
-        client.PutAsJsonAsync($"api/refrigerators/{fridge}/threshold", new { threshold }, cancellationToken);
+    public Task<HttpResponseMessage> ThresholdAsync(string fridge, double threshold, string actorId,
+        CancellationToken cancellationToken) =>
+        client.PutAsJsonAsync($"api/refrigerators/{fridge}/threshold",
+            new { threshold, actor = new { id = actorId } }, cancellationToken);
 
-    public Task<HttpResponseMessage> FanAsync(bool on, CancellationToken cancellationToken) =>
-        client.PostAsJsonAsync("api/fan", new { on }, cancellationToken);
+    public Task<HttpResponseMessage> FanAsync(bool on, string actorId, CancellationToken cancellationToken) =>
+        client.PostAsJsonAsync("api/fan", new { on, actor = new { id = actorId } }, cancellationToken);
 }

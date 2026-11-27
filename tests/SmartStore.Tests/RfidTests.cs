@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using SmartStore.Services;
 
 namespace SmartStore.Tests;
@@ -8,15 +7,36 @@ public sealed class RfidTests
 {
     private readonly FakeClock clock = new();
     private RfidCheckout Create(string mode = "Reader", string key = "abcdefghijklmnopqrstuvwxyz012345") =>
-        new(Microsoft.Extensions.Options.Options.Create(new RfidOptions
-        {
-            Mode = mode, ApiKey = key
-        }), clock);
+        new(Microsoft.Extensions.Options.Options.Create(new RfidOptions { Mode = mode, ApiKey = key }), clock);
 
-    private static Task<string?> Resolve(string epc) => Task.FromResult(epc switch
+    private static Microsoft.AspNetCore.Http.DefaultHttpContext Context(char owner = 'A')
     {
-        "AABB" or "CCDD" => "1001", "EEFF" => "1002", _ => null
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+        context.Request.Headers.Cookie = "__Host-Northstar.RfidOwner=" + new string(owner, 64);
+        return context;
+    }
+
+    private static string Paired(RfidCheckout service, Microsoft.AspNetCore.Http.HttpContext context,
+        bool receiving = false)
+    {
+        var token = service.Open(context, receiving);
+        Assert.True(service.PairReader(context, token, receiving));
+        return token;
+    }
+
+    private static Task<RfidInventory> Resolve(string epc) => Task.FromResult(epc switch
+    {
+        "AABB" or "CCDD" => Inventory(epc, "1001"),
+        "EEFF" => Inventory(epc, "1002"),
+        _ => new RfidInventory(null, null, false)
     });
+
+    private static RfidInventory Inventory(string epc, string code, string status = "in_stock",
+        string? soldBy = null, bool eligible = true) =>
+        new(new SmartStore.Models.Item { Epc = epc, ProductId = "product", Status = status, SoldBy = soldBy },
+            code, eligible);
 
     [Fact]
     public void AuthenticationFailsClosed()
@@ -28,63 +48,180 @@ public sealed class RfidTests
     }
 
     [Fact]
-    public async Task MultiplePhysicalTagsMapToQuantitiesAndRetriesAreDeduplicated()
+    public async Task OpeningNeverPairsAndAnotherTabCannotRedirectActiveReader()
     {
         var service = Create();
-        var session = service.Open();
-        Assert.True(await service.AcceptAsync(new(session, ["aabb", "AABB", "CCDD", "EEFF"]), Resolve));
-        Assert.True(await service.AcceptAsync(new(session, ["AABB"]), Resolve));
-        var tags = service.Read(session)!;
+        var browser = Context();
+        var first = service.Open(browser);
+        Assert.False(await service.AcceptAsync(new(first, ["AABB"]), Resolve));
+        Assert.True(service.PairReader(browser, first));
+        var otherTab = service.Open(Context());
+        Assert.NotEqual(first, otherTab);
+        Assert.False(service.PairReader(Context(), otherTab));
+        Assert.False(service.PairReader(Context('B'), first));
+        Assert.Null(service.Read(Context('B'), first));
+        Assert.False(service.Close(Context('B'), first));
+        Assert.True(await service.AcceptAsync(new(first, ["AABB"]), Resolve));
+        Assert.Single(service.Read(browser, first)!);
+        Assert.Empty(service.Read(Context(), otherTab)!);
+        Assert.True(service.Close(browser, first));
+        Assert.True(service.PairReader(Context(), otherTab));
+    }
+
+    [Fact]
+    public void ReloadsReuseOrReclaimCapacityAndWorkflowMustMatch()
+    {
+        var service = Create();
+        var browser = Context();
+        var token = service.Open(browser);
+        for (var i = 0; i < 150; i++)
+            Assert.Equal(token, service.Open(Context(), existingToken: token));
+        for (var i = 0; i < 150; i++)
+            token = service.Open(Context());
+        Assert.True(service.PairReader(browser, token));
+        Assert.Null(service.Read(browser, token, receiving: true));
+        Assert.False(service.Close(browser, token, receiving: true));
+        var receiving = service.Open(browser, receiving: true);
+        Assert.False(service.PairReader(browser, receiving, receiving: true));
+        Assert.True(service.Close(browser, token));
+        Assert.True(service.PairReader(browser, receiving, receiving: true));
+    }
+
+    [Fact]
+    public void ExpiryReclaimsGlobalCapacityForOtherOwners()
+    {
+        var service = Create();
+        Microsoft.AspNetCore.Http.DefaultHttpContext Browser(int id)
+        {
+            var context = Context();
+            context.Request.Headers.Cookie = "__Host-Northstar.RfidOwner=" + id.ToString("X64");
+            return context;
+        }
+        for (var i = 0; i < 100; i++) service.Open(Browser(i));
+        Assert.Throws<InvalidOperationException>(() => service.Open(Browser(100)));
+        clock.Now = clock.Now.AddMinutes(31);
+        Assert.NotEmpty(service.Open(Browser(100)));
+    }
+
+    [Fact]
+    public void OwnerCookieIsSecureAndAccountChangesDoNotInheritSession()
+    {
+        var service = Create();
+        var browser = Context();
+        browser.Request.Headers.Remove("Cookie");
+        service.Open(browser);
+        var cookie = browser.Response.Headers.SetCookie.ToString();
+        Assert.Contains("__Host-Northstar.RfidOwner=", cookie);
+        Assert.Contains("secure", cookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("httponly", cookie, StringComparison.OrdinalIgnoreCase);
+        var token = service.Open(Context());
+        var signedIn = Context();
+        signedIn.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+            [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, "1234567890abcdef1234567890abcdef")], "test"));
+        Assert.Null(service.Read(signedIn, token));
+        var insecure = Context();
+        insecure.Request.Scheme = "http";
+        Assert.False(service.PairReader(insecure, token));
+        var remote = Context();
+        remote.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("192.0.2.10");
+        Assert.True(service.PairReader(remote, token));
+        Assert.True(service.Close(remote, token));
+    }
+
+    [Fact]
+    public async Task PhysicalTagsHaveReaderProvenanceAndAreDeduplicatedByEpc()
+    {
+        var service = Create();
+        var browser = Context();
+        var token = Paired(service, browser);
+        Assert.True(await service.AcceptAsync(new(token, ["aabb", "AABB", "CCDD", "EEFF"]), Resolve));
+        for (var i = 0; i < 150; i++)
+            Assert.True(await service.AcceptAsync(new(token, ["AABB"], Guid.NewGuid()), Resolve));
+        var tags = service.Read(browser, token)!;
         Assert.Equal(3, tags.Length);
         Assert.Equal(2, tags.Count(t => t.Code == "1001"));
+        Assert.All(tags, tag => Assert.Equal("reader", tag.Source));
+        Assert.True(await service.AcceptAsync(new(token, ["FFFF"], Source: "manual"),
+            _ => Task.FromResult(Inventory("FFFF", "1002"))));
+        Assert.Equal("manual", service.Read(browser, token)!.Single(t => t.Epc == "FFFF").Source);
     }
 
     [Fact]
-    public async Task RepeatPresentationsOfOneTagAreStoredOnceAndNeverFillTheSession()
+    public async Task RegisteredEligibleItemsRequiredAndRejectedBatchesAreAtomic()
     {
         var service = Create();
-        var session = service.Open();
-        // A tag flickering at the edge of the reader's range arrives with a new scan ID each time.
-        for (var i = 0; i < 150; i++)
-            Assert.True(await service.AcceptAsync(new(session, ["AABB"], Guid.NewGuid()), Resolve));
-
-        var tag = Assert.Single(service.Read(session)!);
-        Assert.Equal(("AABB", "1001", (string?)null), (tag.Epc, tag.Code, tag.ScanId));
-        Assert.True(await service.AcceptAsync(new(session, ["CCDD"], Guid.NewGuid()), Resolve));
-        Assert.Equal(2, service.Read(session)!.Length);
+        var browser = Context();
+        var token = Paired(service, browser);
+        foreach (var invalid in new[] { "FFFF", "not-an-epc", "ABC", new string('A', 26) })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(token, ["AABB", invalid]), Resolve));
+        foreach (var mapping in new[]
+        {
+            new RfidInventory(null, "1001", true),
+            Inventory("CCDD", "1001"),
+            Inventory("AABB", "1001", "sold", "scan"),
+            Inventory("AABB", "1001", "sold", null),
+            Inventory("AABB", "1001", "sold", "guess", eligible: false)
+        })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(token, ["AABB"]),
+                _ => Task.FromResult(mapping)));
+        Assert.Empty(service.Read(browser, token)!);
+        Assert.True(await service.AcceptAsync(new(token, ["AABB"]),
+            _ => Task.FromResult(Inventory("AABB", "1001", "sold", "guess"))));
     }
 
     [Fact]
-    public async Task InvalidAndUnmappedBatchesAreAtomic()
+    public async Task InvalidBatchSizeSourceAndScanIdsCannotMutateSession()
     {
         var service = Create();
-        var session = service.Open();
-        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(session, ["AABB", "FFFF"]), Resolve));
-        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(session, ["AABB", "not-an-epc"]), Resolve));
-        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(session, new string[101]), Resolve));
-        Assert.Empty(service.Read(session)!);
+        var browser = Context();
+        var token = Paired(service, browser);
+        foreach (var batch in new RfidBatch[]
+        {
+            new(token, []),
+            new(token, Enumerable.Repeat("AABB", 101).ToArray()),
+            new(token, ["AABB", "CCDD"], Guid.NewGuid()),
+            new(token, ["AABB"], Source: "authenticated-tag")
+        })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(batch, Resolve));
+        Assert.Empty(service.Read(browser, token)!);
     }
 
     [Fact]
-    public async Task SessionsAreIsolatedAndExpire()
+    public async Task ReceivingAllowsNewTagsButNeverConfirmedSoldItems()
     {
         var service = Create();
-        var first = service.Open();
-        var second = service.Open();
-        await service.AcceptAsync(new(first, ["AABB"]), Resolve);
-        Assert.Empty(service.Read(second)!);
-        Assert.False(await service.AcceptAsync(new("unknown", ["AABB"]), Resolve));
+        var browser = Context();
+        var token = Paired(service, browser, receiving: true);
+        Assert.True(await service.AcceptAsync(new(token, [new string('A', 24)]), Resolve));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(token, ["AABB"]),
+            _ => Task.FromResult(Inventory("AABB", "1001", "sold", "scan"))));
+        Assert.Equal("", Assert.Single(service.Read(browser, token, receiving: true)!).Code);
+    }
+
+    [Fact]
+    public async Task SessionsExpireAndClosingDuringResolutionCannotAcceptLateEvents()
+    {
+        var service = Create();
+        var browser = Context();
+        var token = Paired(service, browser);
+        var pending = new TaskCompletionSource<RfidInventory>();
+        var accepting = service.AcceptAsync(new(token, ["AABB"]), _ => pending.Task);
+        Assert.True(service.Close(browser, token));
+        pending.SetResult(Inventory("AABB", "1001"));
+        Assert.False(await accepting);
+        token = Paired(service, browser);
         clock.Now = clock.Now.AddMinutes(31);
-        Assert.Null(service.Read(first));
-        Assert.False(await service.AcceptAsync(new(first, ["CCDD"]), Resolve));
+        Assert.Null(service.Read(browser, token));
+        Assert.False(await service.AcceptAsync(new(token, ["AABB"]), Resolve));
+        Assert.True(service.PairReader(Context('B'), service.Open(Context('B'))));
     }
 
     [Fact]
     public async Task SimulationNeverAcceptsReaderEvents()
     {
         var service = Create("Simulation");
-        Assert.True(service.IsSimulation);
-        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new(service.Open(), ["AABB"]), Resolve));
+        Assert.Equal("", service.Open(Context()));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AcceptAsync(new("manual", ["AABB"]), Resolve));
     }
 
     [Theory]
@@ -99,7 +236,7 @@ public sealed class RfidTests
         app.MapRfid();
         var routes = (Microsoft.AspNetCore.Routing.IEndpointRouteBuilder)app;
         var endpoint = routes.DataSources.SelectMany(source => source.Endpoints).Single();
-        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        var context = Context();
         context.RequestServices = app.Services;
         context.Request.Method = "POST";
         context.Request.Headers["X-Rfid-Key"] = key;

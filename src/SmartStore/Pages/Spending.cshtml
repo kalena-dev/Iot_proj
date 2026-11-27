@@ -69,12 +69,13 @@
 <div class="spending-sidebar">
     @if (isMonth)
     {
-        <section class="panel products-panel spending-budget" data-budget-key="@Model.BudgetKey"
+        <section class="panel products-panel spending-budget"
                  data-spent="@total.ToString(CultureInfo.InvariantCulture)" aria-labelledby="spending-budget-heading">
             <div class="panel__heading"><h2 id="spending-budget-heading">Monthly budget</h2></div>
             <div class="spending-budget-body">
                 <label for="spending-budget-target">Target (CAD)</label>
                 <input id="spending-budget-target" type="number" min="0" max="1000000" step=".01" placeholder="Set a target" />
+                <small>For this visit only; not saved on this device.</small>
                 <p class="spending-budget-message" aria-live="polite" hidden></p>
                 <progress class="spending-budget-progress" aria-label="Monthly budget used" max="100" hidden></progress>
             </div>

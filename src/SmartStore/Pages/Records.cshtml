@@ -13,7 +13,7 @@
     <div class="table-scroll"><table class="products-table"><thead><tr><th>Created (UTC)</th><th>Sender</th><th>Recipient</th><th>Subject</th><th>Status</th><th>Completed (UTC)</th></tr></thead><tbody>
     @foreach (var email in Model.Emails)
     {
-        <tr><td>@email.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td><td>@(email.Sender ?? "—")</td><td>@email.Recipient</td><td>@email.Subject</td>
+        <tr><td>@email.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td><td>@(email.Sender ?? "—")</td><td>@RecordsModel.MaskEmail(email.Recipient)</td><td>@RecordsModel.DisplaySubject(email)</td>
             <td>@email.Status</td><td>@(email.CompletedAtUtc?.ToString("yyyy-MM-dd HH:mm") ?? "—")</td></tr>
     }
     </tbody></table></div>
@@ -27,7 +27,7 @@ else
         <tr><td>@sale.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td><td>
         @if (sale.PaymentStatus == "approved") { <a asp-page="/Receipt" asp-route-id="@sale.Id">@sale.Id</a> }
         else { @sale.Id }
-        </td><td>@(sale.CustomerEmail ?? "Guest")</td><td>@sale.PaymentStatus</td><td>$@sale.Total.ToString("F2")</td><td>@sale.PointsEarned</td></tr>
+        </td><td>@RecordsModel.MaskEmail(sale.CustomerEmail)<br /><small>@(sale.AccountId ?? (sale.CustomerId is null ? "Guest / unclaimed" : "Legacy customer " + sale.CustomerId))</small></td><td>@sale.PaymentStatus</td><td>$@sale.Total.ToString("F2")</td><td>@sale.PointsEarned</td></tr>
     }
     </tbody></table></div>
     @if (Model.Sales.Count == 0) { <p>No transactions on this page.</p> }

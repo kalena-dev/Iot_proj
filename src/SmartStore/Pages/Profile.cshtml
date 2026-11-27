@@ -12,6 +12,8 @@
     <div class="hero__copy">
         <h1>My account</h1>
         <p class="account-email">@Model.Email</p>
+        <p>@Model.FullName · Member @Model.MembershipNumber</p>
+        <details><summary>Account identifier</summary><code>@Model.AccountId</code></details>
     </div>
     <div class="products-actions">
         <a asp-page="/Checkout" class="primary-button">Go to self-checkout</a>

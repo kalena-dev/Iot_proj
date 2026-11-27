@@ -6,14 +6,21 @@ public static class DotEnvLoader
     public static string? Load()
     {
         var explicitPath = Environment.GetEnvironmentVariable("MONGODB_ENV_FILE");
+        var isolatedPath = Environment.GetEnvironmentVariable("NORTHSTAR_CONFIG_FILE");
+        if (!string.IsNullOrWhiteSpace(isolatedPath))
+        {
+            isolatedPath = Path.GetFullPath(isolatedPath);
+            if (!File.Exists(isolatedPath))
+                throw new FileNotFoundException("The role-specific configuration file is unavailable.", isolatedPath);
+        }
         var configHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
         if (string.IsNullOrWhiteSpace(configHome))
         {
             configHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
         }
 
-        // Match the TypeScript service: process > explicit file > project > user config.
-        var paths = new[]
+        // Deployed roles read only their explicit file; process variables still win.
+        var paths = !string.IsNullOrWhiteSpace(isolatedPath) ? new[] { isolatedPath } : new[]
         {
             string.IsNullOrWhiteSpace(explicitPath) ? null : Path.GetFullPath(explicitPath),
             FindInCurrentOrParentDirectories(".env"),

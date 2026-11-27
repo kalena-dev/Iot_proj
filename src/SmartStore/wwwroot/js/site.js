@@ -1,4 +1,11 @@
 ﻿document.addEventListener("DOMContentLoaded", () => {
+  // Remove budget values saved by older versions; current budgets never persist.
+  try {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index);
+      if (key?.startsWith("smartstore.monthly-budget.")) localStorage.removeItem(key);
+    }
+  } catch { /* Browser storage may be disabled. */ }
   document.querySelectorAll("[data-dismissible]").forEach((notice) => {
     const closeButton = notice.querySelector(".notice__close");
     closeButton?.addEventListener("click", () => notice.remove());

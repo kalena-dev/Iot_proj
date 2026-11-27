@@ -29,8 +29,8 @@ public sealed partial class MongoProductRepository
         var item = await FindItemAsync(key, token, session);
         if (item is not null)
         {
-            var owner = await (session is null ? _products.Find(p => p.Id == item.ProductId)
-                : _products.Find(session, p => p.Id == item.ProductId)).FirstOrDefaultAsync(token);
+            var owner = await (session is null ? _products.Find(p => p.Id == item.ProductId && p.ArchivedAtUtc == null)
+                : _products.Find(session, p => p.Id == item.ProductId && p.ArchivedAtUtc == null)).FirstOrDefaultAsync(token);
             return owner is null ? null : (owner, true);
         }
 
@@ -42,13 +42,13 @@ public sealed partial class MongoProductRepository
             var primary = await FindByUpcAsync(code, token, session);
             return primary is null ? null : (primary, false);
         }
-        var product = await (session is null ? _products.Find(p => p.Id == association.ProductId)
-            : _products.Find(session, p => p.Id == association.ProductId)).FirstOrDefaultAsync(token);
+        var product = await (session is null ? _products.Find(p => p.Id == association.ProductId && p.ArchivedAtUtc == null)
+            : _products.Find(session, p => p.Id == association.ProductId && p.ArchivedAtUtc == null)).FirstOrDefaultAsync(token);
         return product is null ? null : (product, false);
     }
 
     public Task<List<ProductCode>> ListCodesAsync(CancellationToken token) =>
-        _codes.Find(c => c.Kind != "epc").SortBy(c => c.Code).ToListAsync(token);
+        _codes.Find(c => c.Kind != "epc" && c.Kind != "item").SortBy(c => c.Code).ToListAsync(token);
 
     public async Task AssignCodeAsync(string code, string upc, CancellationToken token)
     {
@@ -59,7 +59,7 @@ public sealed partial class MongoProductRepository
         await MongoTransaction.RunAsync(_client, async (session, ct) =>
         {
             // Serialize assignments with product edits and deletion.
-            var product = await _products.FindOneAndUpdateAsync<Product, Product>(session, p => p.Upc == upc,
+            var product = await _products.FindOneAndUpdateAsync<Product, Product>(session, p => p.Upc == upc && p.ArchivedAtUtc == null,
                 Builders<Product>.Update.Set(p => p.UpdatedAtUtc, DateTime.UtcNow), cancellationToken: ct)
                 ?? throw new ProductNotFoundException();
             // A registered RFID tag identifies one unit and is never reused as a barcode.
@@ -77,7 +77,10 @@ public sealed partial class MongoProductRepository
         var key = code.Trim().ToUpperInvariant();
         try
         {
-            await _codes.UpdateOneAsync(session, c => c.Code == key && c.ProductId == productId,
+            var compatibleKind = kind == "item"
+                ? Builders<ProductCode>.Filter.In(c => c.Kind, new[] { "item", "epc" })
+                : Builders<ProductCode>.Filter.In(c => c.Kind, new[] { "upc", "barcode" });
+            await _codes.UpdateOneAsync(session, Builders<ProductCode>.Filter.Where(c => c.Code == key && c.ProductId == productId) & compatibleKind,
                 Builders<ProductCode>.Update.SetOnInsert(c => c.Kind, kind), new UpdateOptions { IsUpsert = true }, token);
         }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -86,8 +89,12 @@ public sealed partial class MongoProductRepository
         }
     }
 
-    private Task SavePrimaryCodesAsync(IClientSessionHandle session, Product product, CancellationToken token) =>
-        ClaimCodeAsync(session, product.Id!, product.Upc, "upc", token);
+    private async Task SavePrimaryCodesAsync(IClientSessionHandle session, Product product, CancellationToken token)
+    {
+        if (await _items.Find(session, i => i.Epc == product.Upc.ToUpperInvariant()).AnyAsync(token))
+            throw new DuplicateProductCodeException("UPC", product.Upc);
+        await ClaimCodeAsync(session, product.Id!, product.Upc, "upc", token);
+    }
 
     public async Task BackfillCodesAsync(CancellationToken token)
     {
@@ -103,9 +110,8 @@ public sealed partial class MongoProductRepository
             }, "Product code migration", id!, token);
     }
 
-    // The old model stored one EPC per product (plus EPC aliases in product_codes). Each of those
-    // tags becomes an in-stock item, up to the product's current stock; the remaining units stay
-    // untagged. Tags beyond the stock count are dropped so they can be received again.
+    // Preserve legacy EPC source fields and aliases for traceability. Eligible tags are copied into Items;
+    // surplus or unsupported old identifiers remain private historical data, never silently deleted.
     private async Task MigrateLegacyEpcsAsync(CancellationToken token)
     {
         var raw = _products.Database.GetCollection<BsonDocument>(_products.CollectionNamespace.CollectionName);
@@ -133,17 +139,20 @@ public sealed partial class MongoProductRepository
                     foreach (var tag in tags.Select(t => t.Trim().ToUpperInvariant()).Distinct())
                     {
                         if (room <= 0) break;
-                        if (tag.Length == 0 || !tag.All(Uri.IsHexDigit) || await _items.Find(session, i => i.Epc == tag).AnyAsync(ct))
+                        if (Item.NormalizeEpc(tag) is null || await _items.Find(session, i => i.Epc == tag).AnyAsync(ct))
                             continue;
+                        // Ambiguous legacy identifiers stay in their original documents, never overwrite a barcode.
+                        if (await _products.Find(session, p => p.Upc == tag).AnyAsync(ct)) continue;
+                        var claim = await _codes.Find(session, c => c.Code == tag).FirstOrDefaultAsync(ct);
+                        if (claim is not null && (claim.ProductId != id || claim.Kind is not ("epc" or "item"))) continue;
+                        await ClaimCodeAsync(session, id, tag, "item", ct);
                         await _items.InsertOneAsync(session, new Item
                         {
                             Epc = tag, ProductId = id, Status = Item.InStock, ReceivedAtUtc = DateTime.UtcNow
                         }, cancellationToken: ct);
                         room--;
                     }
-                    await raw.UpdateOneAsync(session, filter, Builders<BsonDocument>.Update.Unset("epc"), cancellationToken: ct);
                 }
-                await _codes.DeleteManyAsync(session, c => c.ProductId == id && c.Kind == "epc", cancellationToken: ct);
                 return true;
             }, "EPC migration", id, token);
         }

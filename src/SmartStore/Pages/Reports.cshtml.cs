@@ -26,35 +26,25 @@ public sealed class ReportsModel(StoreDemo store) : PageModel
         From ??= new DateOnly(To.Value.Year, To.Value.Month, 1);
         if (From > To || To == DateOnly.MaxValue)
             ModelState.AddModelError(nameof(To), "Choose an end date on or after the start date.");
+        if (From is { } from && To is { } to && to.DayNumber - from.DayNumber > 365)
+            ModelState.AddModelError(nameof(To), "Choose a report period of at most one year.");
         if (!ModelState.IsValid) return;
 
         var start = From.Value.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
         var end = To.Value.AddDays(1).ToDateTime(TimeOnly.MinValue).ToUniversalTime();
         var inventoryTask = store.GetProductsAsync(token);
-        var salesTask = store.ApprovedSalesInPeriodAsync(start, end, token);
-        var previousTask = store.PreviousPurchasersAsync(start, token);
-        await Task.WhenAll(salesTask, previousTask, inventoryTask);
-        var sales = await salesTask;
-        Revenue = sales.Sum(sale => sale.Total);
-        var sold = sales.SelectMany(sale => sale.Items).GroupBy(item => item.Code, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key,
-                group => new ProductSales(group.Key, group.Last().Name, group.Sum(item => (long)item.Quantity)),
-                StringComparer.OrdinalIgnoreCase);
+        var reportTask = store.ReportAsync(start, end, token);
+        await Task.WhenAll(reportTask, inventoryTask);
+        var report = await reportTask;
+        Revenue = report.Revenue;
+        var sold = report.Products.ToDictionary(product => product.ProductKey,
+            product => new ProductSales(product.Code, product.Name, product.Units), StringComparer.Ordinal);
         foreach (var product in await inventoryTask)
-            sold.TryAdd(product.Code, new ProductSales(product.Code, product.Name, 0));
+            sold.TryAdd(product.ProductId, new ProductSales(product.Code, product.Name, 0));
         Sales = sold.Values.OrderByDescending(product => product.Units).ThenBy(product => product.Name).ToArray();
-
-        var identified = sales.Where(sale => !string.IsNullOrWhiteSpace(sale.CustomerEmail)).ToArray();
-        var comparer = StringComparer.OrdinalIgnoreCase;
-        var current = identified.Select(sale => sale.CustomerEmail!.Trim()).ToHashSet(comparer);
-        var previous = (await previousTask).Select(email => email?.Trim()).ToHashSet(comparer);
-        Customers = current.Count;
-        ReturningCustomers = current.Count(email => previous.Contains(email));
-
-        var activeDays = identified.GroupBy(sale => DateOnly.FromDateTime(sale.CreatedAtUtc.ToLocalTime()))
-            .Select(group => new CustomerDay(group.Key,
-                group.Select(sale => sale.CustomerEmail!.Trim()).Distinct(comparer).Count()))
-            .OrderBy(day => day.Date).ToArray();
+        Customers = report.Customers;
+        ReturningCustomers = report.ReturningCustomers;
+        var activeDays = report.Days.Select(day => new CustomerDay(day.Date, day.Customers)).OrderBy(day => day.Date).ToArray();
         var firstEmptyDay = From.Value;
         foreach (var day in activeDays)
         {

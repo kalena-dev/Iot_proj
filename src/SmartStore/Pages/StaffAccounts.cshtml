@@ -1,0 +1,29 @@
+@page
+@model StaffAccountsModel
+@{ ViewData["Title"] = "Account administration"; }
+<section class="panel form-panel account-panel">
+    <h1>Account administration</h1>
+    <p>Confirm the person and their immutable account ID before granting access. Email addresses alone never grant staff privileges.</p>
+    <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
+    @if (Model.Message is { } message) { <p role="status">@message</p> }
+    <form method="post" class="account-form">
+        <label asp-for="AccountId">Account ID</label>
+        <input asp-for="AccountId" minlength="32" maxlength="32" required spellcheck="false" />
+        <button type="submit" asp-page-handler="Lookup" class="primary-button">Look up account</button>
+    </form>
+    @if (Model.Selected is { } account)
+    {
+        <dl><dt>Name</dt><dd>@account.FullName</dd><dt>Email</dt><dd>@account.Email</dd>
+            <dt>Membership</dt><dd>@account.MembershipNumber</dd><dt>Disabled</dt><dd>@account.Disabled</dd>
+            <dt>Staff provisioned</dt><dd>@account.StaffProvisioned</dd></dl>
+        <form method="post" class="account-form">
+            <input type="hidden" asp-for="AccountId" />
+            <button type="submit" asp-page-handler="Provision" class="primary-button">Provision allowlisted staff ID</button>
+            <button type="submit" asp-page-handler="Revoke" class="primary-button">Sign out every session</button>
+            @if (account.Disabled)
+            { <button type="submit" asp-page-handler="Enable" class="primary-button">Re-enable account</button> }
+            else
+            { <button type="submit" asp-page-handler="Disable" class="primary-button">Disable account</button> }
+        </form>
+    }
+</section>

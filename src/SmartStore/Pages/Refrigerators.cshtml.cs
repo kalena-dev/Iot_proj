@@ -17,14 +17,18 @@ public sealed class RefrigeratorsModel(IotServiceClient iot, ILogger<Refrigerato
         if (!ModelState.IsValid || fridge is not ("Frig1" or "Frig2") || threshold is null
             || !double.IsFinite(threshold.Value) || threshold is < 0 or > 50)
             return Task.FromResult<IActionResult>(new JsonResult(new { error = "Choose a refrigerator and a threshold from 0 to 50 °C." }) { StatusCode = 400 });
-        return ProxyAsync(() => iot.ThresholdAsync(fridge, threshold.Value, cancellationToken), cancellationToken);
+        if (StoreAccounts.AccountIdOf(User) is not { } actorId)
+            return Task.FromResult<IActionResult>(Forbid());
+        return ProxyAsync(() => iot.ThresholdAsync(fridge, threshold.Value, actorId, cancellationToken), cancellationToken);
     }
 
     public Task<IActionResult> OnPostFanAsync(bool? on, CancellationToken cancellationToken)
     {
         if (!ModelState.IsValid || on is null)
             return Task.FromResult<IActionResult>(new JsonResult(new { error = "Choose ON or OFF." }) { StatusCode = 400 });
-        return ProxyAsync(() => iot.FanAsync(on.Value, cancellationToken), cancellationToken);
+        if (StoreAccounts.AccountIdOf(User) is not { } actorId)
+            return Task.FromResult<IActionResult>(Forbid());
+        return ProxyAsync(() => iot.FanAsync(on.Value, actorId, cancellationToken), cancellationToken);
     }
 
     private async Task<IActionResult> ProxyAsync(Func<Task<HttpResponseMessage>> request, CancellationToken cancellationToken)

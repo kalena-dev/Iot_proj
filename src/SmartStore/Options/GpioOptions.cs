@@ -13,9 +13,9 @@ public sealed class GpioOptions
     public bool Enabled { get; set; } = true;
 
     // BCM (logical) GPIO numbers, not physical header pin numbers.
-    public int BlueLedPin { get; set; } = 17;
+    public int BlueLedPin { get; set; } = 5;
 
-    public int RedLedPin { get; set; } = 27;
+    public int RedLedPin { get; set; } = 6;
 
     public int BuzzerPin { get; set; } = 22;
 

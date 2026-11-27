@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using SmartStore.Services;
@@ -10,7 +8,6 @@ public sealed record SpendingPeriod(DateTime Start, DateTime End, string Label, 
 
 public sealed class SpendingModel(StoreDemo store) : PageModel
 {
-    public string BudgetKey { get; private set; } = "";
     public string View { get; private set; } = "monthly";
     public DateTime Start { get; private set; }
     public DateTime End { get; private set; }
@@ -23,9 +20,7 @@ public sealed class SpendingModel(StoreDemo store) : PageModel
 
     public async Task<IActionResult> OnGetAsync(string? view, DateOnly? date, CancellationToken cancellationToken)
     {
-        if (StoreAccounts.EmailOf(User) is not { } email) return Challenge();
-
-        BudgetKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(email.ToLowerInvariant())));
+        if (StoreAccounts.AccountIdOf(User) is not { } accountId) return Challenge();
         View = view is "daily" or "weekly" or "yearly" ? view : "monthly";
         var today = DateTime.Today;
         var selected = date?.ToDateTime(TimeOnly.MinValue) ?? today;
@@ -55,10 +50,10 @@ public sealed class SpendingModel(StoreDemo store) : PageModel
             _ => Start.ToString("MMMM yyyy")
         };
 
-        var purchases = await store.CustomerHistoryAsync(email, cancellationToken,
-            Start.ToUniversalTime(), End.ToUniversalTime());
-        var totalsByDay = purchases.GroupBy(sale => sale.CreatedAtUtc.ToLocalTime().Date)
-            .ToDictionary(day => day.Key, day => day.Sum(sale => sale.Total));
+        var purchases = await store.CustomerSpendingAsync(accountId,
+            Start.ToUniversalTime(), End.ToUniversalTime(), cancellationToken);
+        var totalsByDay = purchases.GroupBy(bucket => bucket.StartUtc.ToLocalTime().Date)
+            .ToDictionary(day => day.Key, day => day.Sum(bucket => bucket.Total));
 
         var periods = new List<SpendingPeriod>();
         for (var start = Start; start < End; )
@@ -75,7 +70,7 @@ public sealed class SpendingModel(StoreDemo store) : PageModel
         {
             "daily" => Enumerable.Range(0, 6).Select(bucket => new CustomerChartPoint(
                 $"{Start.AddHours(bucket * 4):HH:mm}–{Start.AddHours((bucket + 1) * 4):HH:mm}",
-                purchases.Where(sale => sale.CreatedAtUtc.ToLocalTime().Hour / 4 == bucket).Sum(sale => sale.Total)))
+                purchases.Where(point => point.StartUtc.ToLocalTime().Hour / 4 == bucket).Sum(point => point.Total)))
                 .ToArray(),
             "monthly" => periods.GroupBy(period => period.Start.AddDays(-((int)period.Start.DayOfWeek + 6) % 7))
                 .Select(week => new CustomerChartPoint($"{week.First().Start:MMM d}–{week.Last().Start:MMM d}",

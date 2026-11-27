@@ -22,7 +22,7 @@
 {
     <section class="panel form-panel"><p class="system-warning" role="alert">@Model.DatabaseWarning</p></section>
 }
-else if (Model.AllProducts.Count == 0)
+else if (Model.AllProducts.Count == 0 && Model.Selected is null)
 {
     <section class="panel form-panel">
         <div class="empty-state">
@@ -35,6 +35,10 @@ else
 {
     <div class="workspace">
         <section class="panel form-panel">
+            @if (Model.Selected?.ArchivedAtUtc is { } archivedAt)
+            {
+                <p role="status">Archived @archivedAt.ToLocalTime().ToString("g"). Inventory and delivery history are retained; receiving is disabled.</p>
+            }
             <form method="get" class="products-filter scan-lookup" asp-route-id="">
                 <label for="Code">Scan a UPC barcode to find the product</label>
                 <div>
@@ -44,8 +48,9 @@ else
             </form>
 
             <form method="post" id="receive-form">
+                <input type="hidden" name="ReaderSession" value="@Model.RfidSession" />
                 <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
-                <fieldset>
+                <fieldset disabled="@(Model.Selected?.ArchivedAtUtc != null)">
                     <legend>Delivery</legend>
                     <div class="form-grid">
                         <div class="field field--wide">
@@ -73,10 +78,12 @@ else
                                 @if (!string.IsNullOrEmpty(Model.RfidSession))
                                 {
                                     <small data-receive-reader="@Model.RfidSession" role="status">Waiting for the RFID reader. Scan each unit, then review the list before saving.</small>
+                                    <button type="button" class="secondary-button" data-pair-reader>Pair reader</button>
+                                    <button type="button" class="secondary-button" data-close-reader>Release reader</button>
                                 }
                                 else
                                 {
-                                    <small>Choose a product first. You can also enter EPCs manually or scan into the box with a keyboard-mode reader.</small>
+                                    <small>@(Model.Selected is null ? "Choose a product first. You can also enter EPCs manually." : "Reader unavailable. You can still enter EPCs manually.")</small>
                                 }
                             </div>
                             <span asp-validation-for="Input.Tags" class="field-error"></span>
@@ -105,7 +112,7 @@ else
                 </fieldset>
                 <div class="form-actions">
                     <span></span>
-                    <button type="submit" class="primary-button">Receive stock</button>
+                    <button type="submit" class="primary-button" disabled="@(Model.Selected?.ArchivedAtUtc != null)">Receive stock</button>
                 </div>
             </form>
         </section>
@@ -138,7 +145,7 @@ else
                         </details>
                     }
                     <p class="products-count">
-                        @Model.History.Count delivery(ies) · @Model.History.Sum(r => r.Quantity) unit(s) received in total
+                        Latest @Model.History.Count delivery(ies) · @Model.History.Sum(r => r.Quantity) unit(s) shown
                     </p>
                     @if (Model.History.Count == 0)
                     {
@@ -155,19 +162,23 @@ else
                                 @if (reception.Epcs.Count > 0) { <small>@reception.Epcs.Count tagged · @(reception.Quantity - reception.Epcs.Count) untagged</small> }
                                 @if (reception.ExpiresOn is { } expires) { <small>Expires @expires.ToString("yyyy-MM-dd")</small> }
                                 @if (reception.Note is not null) { <small>@reception.Note</small> }
-                                <details class="confirm-delete">
-                                    <summary>Undo</summary>
-                                    <div class="confirm-delete__box">
-                                        <p>Remove this delivery and take @reception.Quantity off the stock?@(reception.Epcs.Count > 0 ? $" Its {reception.Epcs.Count} tag(s) will be unregistered." : "")</p>
-                                        <form method="post" asp-page-handler="Undo" asp-route-receptionId="@reception.Id" asp-route-productId="@product.Id">
-                                            <button type="submit" class="danger-button">Yes, remove</button>
-                                        </form>
-                                    </div>
-                                </details>
+                                @if (product.ArchivedAtUtc is null)
+                                {
+                                    <details class="confirm-delete">
+                                        <summary>Undo</summary>
+                                        <div class="confirm-delete__box">
+                                            <p>Remove this delivery and take @reception.Quantity off the stock?@(reception.Epcs.Count > 0 ? $" Its {reception.Epcs.Count} tag(s) will be unregistered." : "")</p>
+                                            <form method="post" asp-page-handler="Undo" asp-route-receptionId="@reception.Id" asp-route-productId="@product.Id">
+                                                <input type="hidden" name="ReaderSession" value="@Model.RfidSession" />
+                                                <button type="submit" class="danger-button">Yes, remove</button>
+                                            </form>
+                                        </div>
+                                    </details>
+                                }
                             </li>
                         }
                     </ul>
-                    <a asp-page="Edit" asp-route-id="@product.Id">Edit product details →</a>
+                    @if (product.ArchivedAtUtc is null) { <a asp-page="Edit" asp-route-id="@product.Id">Edit product details →</a> }
                 }
             </section>
         </aside>

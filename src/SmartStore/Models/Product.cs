@@ -43,6 +43,11 @@ public sealed class Product
     [BsonElement("quantityInStock")]
     public int QuantityInStock { get; set; }
 
+    [BsonElement("archivedAtUtc")]
+    [BsonIgnoreIfNull]
+    [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+    public DateTime? ArchivedAtUtc { get; set; }
+
     [BsonElement("createdAtUtc")]
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime CreatedAtUtc { get; set; }

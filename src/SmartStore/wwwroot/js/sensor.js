@@ -32,9 +32,14 @@
         return null;
     }
 
+    function observationTime(value, now) {
+        return Number.isSafeInteger(value) && value >= 946684800000 && value <= now + 5000
+            ? value : null;
+    }
+
     function render(readings) {
-        const timestamp = Number.isFinite(readings.timestamp) ? readings.timestamp : null;
         const now = Date.now();
+        const timestamp = observationTime(readings.timestamp, now);
         const fresh = timestamp !== null && now - timestamp <= staleAfter;
         for (const card of cards) {
             const text = readingText(card.key, readings);
@@ -45,12 +50,17 @@
                 }
                 card.reading = { text, timestamp, active };
             }
-            if (!card.reading) continue;
+            if (!card.reading) {
+                card.element.dataset.state = "unknown";
+                continue;
+            }
             const seenAt = card.reading.timestamp;
-            const stale = seenAt !== null && now - seenAt > staleAfter;
-            card.element.dataset.state = stale ? "stale" : card.reading.active ? "active" : "normal";
+            const knownTime = seenAt !== null && seenAt <= now + 5000;
+            const stale = knownTime && now - seenAt > staleAfter;
+            card.element.dataset.state = !knownTime ? "unknown" : stale ? "stale"
+                : card.reading.active ? "active" : "normal";
             card.value.textContent = card.reading.text;
-            card.meta.textContent = seenAt === null ? "Time unavailable"
+            card.meta.textContent = !knownTime ? "Observation time unavailable"
                 : `${stale ? "Stale · last seen" : "Last seen"} ${timeFormat.format(seenAt)}`;
         }
 

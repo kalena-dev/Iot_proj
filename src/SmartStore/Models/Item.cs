@@ -40,8 +40,8 @@ public sealed class Item
     [BsonIgnoreIfNull]
     public DateTime? SoldAtUtc { get; set; }
 
-    // How the sale knew this unit: its tag was scanned, or a barcode sale guessed it (oldest first).
-    // A guess is corrected when the tag turns up again. Null on older sales counts as scanned.
+    // An explicit EPC identifier (typed or reader-transferred), or a barcode sale's oldest-unit guess.
+    // Neither source authenticates a physical tag. Null on older sales is treated as an explicit identifier.
     public const string SoldByScan = "scan";
     public const string SoldByGuess = "guess";
 
@@ -49,10 +49,10 @@ public sealed class Item
     [BsonIgnoreIfNull]
     public string? SoldBy { get; set; }
 
-    /// <summary>Returns the EPC in stored form, or null if it is not 4–128 hex digits in whole bytes.</summary>
+    /// <summary>Returns the EPC in stored form, or null if it is not 4–24 hex digits in whole bytes.</summary>
     public static string? NormalizeEpc(string? epc)
     {
         var value = epc?.Trim().ToUpperInvariant() ?? "";
-        return value.Length is >= 4 and <= 128 && value.Length % 2 == 0 && value.All(Uri.IsHexDigit) ? value : null;
+        return value.Length is >= 4 and <= 24 && value.Length % 2 == 0 && value.All(Uri.IsHexDigit) ? value : null;
     }
 }

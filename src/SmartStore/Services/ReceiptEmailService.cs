@@ -4,7 +4,8 @@ using System.Text;
 
 namespace SmartStore.Services;
 
-public sealed class ReceiptEmailService(IConfiguration config, ILogger<ReceiptEmailService> logger)
+public sealed class ReceiptEmailService(IConfiguration config, ILogger<ReceiptEmailService> logger,
+    AccountSecurityStore security)
 {
     public string? Sender => config["SMTP_FROM"];
 
@@ -43,29 +44,46 @@ public sealed class ReceiptEmailService(IConfiguration config, ILogger<ReceiptEm
             $"Enter this code in the browser where you started registration:\n\n{code}\n\nThe code expires after 15 minutes.",
             cancellationToken);
 
+    public Task<bool> SendRecoveryCodeAsync(string email, string code, CancellationToken cancellationToken) =>
+        SendMessageAsync(email, "Recover your Northstar Smart Store account",
+            $"Enter this code in the browser where you requested recovery:\n\n{code}\n\nThe code expires after 15 minutes. If you did not request this, ignore this email.",
+            cancellationToken);
+
+    public Task<bool> SendStaffVerificationCodeAsync(string email, string code, CancellationToken cancellationToken) =>
+        SendMessageAsync(email, "Verify your Northstar staff sign-in",
+            $"Enter this code in the browser where you entered your password:\n\n{code}\n\nThe code expires after 15 minutes. Never share this code.",
+            cancellationToken);
+
     private async Task<bool> SendMessageAsync(string recipient, string subject, string text,
         CancellationToken cancellationToken)
     {
+        var normalizedRecipient = StoreAccounts.NormalizeEmail(recipient);
+        if (normalizedRecipient is null) return false;
         if (!bool.TryParse(config["EMAIL_ENABLED"], out var enabled) || !enabled) return false;
         var host = config["SMTP_HOST"];
         var user = config["SMTP_USER"];
         var password = config["SMTP_PASSWORD"];
         var from = config["SMTP_FROM"];
         if (new[] { host, user, password, from }.Any(string.IsNullOrWhiteSpace)) return false;
+        if (!await security.TrySendMailAsync(normalizedRecipient, cancellationToken)) return false;
+        var smtpPort = int.TryParse(config["SMTP_PORT"], out var configuredPort) ? configuredPort : 587;
+        // System.Net.Mail uses STARTTLS, not implicit TLS on port 465.
+        if (smtpPort == 465) return false;
         try
         {
-            using var client = new SmtpClient(host!, int.TryParse(config["SMTP_PORT"], out var port) ? port : 587)
+            using var client = new SmtpClient(host!, smtpPort)
             {
                 EnableSsl = true,
                 Credentials = new NetworkCredential(user, password)
             };
-            using var message = new MailMessage(from!, recipient, subject, text);
+            using var message = new MailMessage(from!, normalizedRecipient, subject, text);
             await client.SendMailAsync(message, cancellationToken);
             return true;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is SmtpException or InvalidOperationException or ArgumentException or OperationCanceledException)
         {
-            logger.LogWarning(exception, "SmartStore email delivery failed.");
+            // SMTP exceptions can contain addresses and server responses; do not log their text.
+            logger.LogWarning("SmartStore email delivery failed ({FailureType}).", exception.GetType().Name);
             return false;
         }
     }

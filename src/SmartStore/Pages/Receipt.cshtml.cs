@@ -10,12 +10,11 @@ public sealed class ReceiptModel(StoreDemo store, ReceiptEmailService email, ICo
 
     public async Task<IActionResult> OnGetAsync(string id, CancellationToken cancellationToken)
     {
+        Response.Headers.CacheControl = "no-store";
         if (string.IsNullOrWhiteSpace(id) || id.Length > 40) return NotFound();
         var sale = await store.FindSaleAsync(id, cancellationToken);
         if (sale is null || sale.PaymentStatus != "approved") return NotFound();
-        if (!StoreAccounts.IsStaff(User, configuration) &&
-            (StoreAccounts.EmailOf(User) is not { } owner ||
-             !string.Equals(sale.CustomerEmail, owner, StringComparison.OrdinalIgnoreCase)))
+        if (!StoreAccounts.IsStaff(User, configuration) && !CheckoutAccess.Owns(HttpContext, sale))
             return NotFound();
 
         ReceiptText = email.FormatReceipt(sale);

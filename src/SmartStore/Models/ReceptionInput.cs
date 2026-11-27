@@ -11,7 +11,7 @@ public sealed class ReceptionInput
     public string ProductId { get; set; } = string.Empty;
 
     // One EPC per scanned unit, separated by new lines, spaces or commas.
-    [StringLength(MaxTags * 130, ErrorMessage = "Too many tags for one delivery.")]
+    [StringLength(MaxTags * 26, ErrorMessage = "Too many tags for one delivery.")]
     [Display(Name = "Scanned RFID tags")]
     public string? Tags { get; set; }
 

@@ -1,0 +1,25 @@
+@page
+@model AccountSecurityModel
+@{ ViewData["Title"] = "Account security"; }
+<section class="panel form-panel account-panel">
+    <h1>Account security</h1>
+    <div asp-validation-summary="ModelOnly" class="field-error" role="alert"></div>
+    @if (Model.Message is { } message) { <p role="status">@message</p> }
+    <p>Membership: <strong>@Model.Account?.MembershipNumber</strong></p>
+    <p>Account ID: <code>@Model.Account?.AccountId</code></p>
+    <form method="post" asp-page-handler="Name" class="account-form">
+        <label asp-for="FullName">Full name</label>
+        <input asp-for="FullName" autocomplete="name" maxlength="100" required />
+        <span asp-validation-for="FullName" class="field-error"></span>
+        <button type="submit" class="primary-button">Save name</button>
+    </form>
+    <p><a asp-page="/Recover">Change or recover password</a></p>
+    <form method="post" asp-page-handler="SignOutAll"><button type="submit" class="primary-button">Sign out every session</button></form>
+    <h2>Disable account</h2>
+    <p>This revokes every session. Your purchase records remain intact. Only staff can re-enable your account.</p>
+    <form method="post" asp-page-handler="Disable" class="account-form">
+        <label asp-for="Password">Confirm password</label>
+        <input asp-for="Password" type="password" autocomplete="current-password" maxlength="128" required />
+        <button type="submit" class="primary-button">Disable my account</button>
+    </form>
+</section>

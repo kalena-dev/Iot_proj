@@ -34,14 +34,18 @@
                 }
                 else
                 {
-                    <details><summary>Pair reader manually</summary><input id="rfid-session" value="@Model.RfidSession" aria-label="Reader pairing session" readonly /></details>
+                    <button type="button" class="checkout-small-button" id="pair-reader">Pair reader</button>
+                    <button type="button" class="checkout-small-button" id="close-reader">Release reader</button>
+                    <details><summary>Reader session</summary><input id="rfid-session" value="@Model.RfidSession" aria-label="Reader pairing session" readonly /></details>
                 }
-                <span id="rfid-status" role="status">@(Model.SimulationMode ? "Simulation mode" : "Waiting for the paired reader.")</span>
+                <span id="rfid-status" role="status">@(Model.SimulationMode ? "Simulation mode" : Model.RfidSession.Length > 0 ? "Pair the reader, or enter codes manually." : "Reader unavailable. Manual entry is still available.")</span>
             </div>
             <p id="scan-error" role="alert" class="field-error"></p>
             <div id="cart-list" class="checkout-cart-list" aria-live="polite">No items yet.</div>
             <form method="post" id="checkout-form" class="checkout-form">
                 <input type="hidden" asp-for="Cart" />
+                <input type="hidden" asp-for="AttemptId" />
+                <input type="hidden" name="ReaderSession" value="@Model.RfidSession" />
                 <div id="checkout-coupons" hidden>
                     @if (Model.Coupons.Count > 0)
                     {
@@ -68,9 +72,18 @@
                     <div class="demo-cart-row"><span id="coupon-label">Loyalty coupon</span><strong id="cart-discount"></strong></div>
                 </div>
                 <div class="checkout-total" aria-live="polite"><span>Order total</span><strong id="cart-total">$0.00</strong></div>
-                <label for="receipt-email">Account email</label>
-                <input id="receipt-email" type="email" value="@Model.AccountEmail" readonly />
-                <p class="checkout-points-note">Approved purchases earn points on the amount paid and send receipts to this email.</p>
+                @if (Model.AccountId is not null)
+                {
+                    <label for="receipt-email">Account email</label>
+                    <input id="receipt-email" type="email" value="@Model.AccountEmail" readonly />
+                    <p class="checkout-points-note">Membership is active. Approved purchases earn points and send receipts to your account email.</p>
+                }
+                else
+                {
+                    <label asp-for="ReceiptEmail">Receipt email (optional)</label>
+                    <input asp-for="ReceiptEmail" type="email" maxlength="254" autocomplete="email" />
+                    <p class="checkout-points-note">Guest checkout needs no account. <a asp-page="/Login" asp-route-returnUrl="/Checkout">Sign in</a> to use membership and earn points.</p>
+                }
                 <label for="PaymentResult">Simulated payment</label>
                 <select asp-for="PaymentResult"><option value="approve">Approve payment</option><option value="decline">Decline payment</option></select>
                 <button type="submit" class="primary-button checkout-submit" id="checkout-button" disabled>Complete checkout</button>

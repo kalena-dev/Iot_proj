@@ -27,6 +27,7 @@ public sealed class MongoReplicaSetFactAttribute : FactAttribute
 internal sealed class MongoTestDatabase : IAsyncDisposable
 {
     public const string UriVariable = "SMARTSTORE_TEST_MONGODB_URI";
+    public const string MemberId = "11111111111111111111111111111111";
     private readonly CancellationTokenSource _lifetime = new(TimeSpan.FromSeconds(60));
     private readonly MongoClient _client;
     private readonly MongoClient _observer;
@@ -62,7 +63,7 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
         var options = Microsoft.Extensions.Options.Options.Create(new MongoDbOptions { DatabaseName = Name });
         Products = new MongoProductRepository(_client, options);
         Customers = new MongoCustomerRepository(_client, options);
-        Store = new StoreDemo(_client, options, Products, Customers, NullLogger<StoreDemo>.Instance);
+        Store = new StoreDemo(_client, options, Products, NullLogger<StoreDemo>.Instance);
     }
 
     public string Name { get; }
@@ -91,7 +92,8 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
             if (!hello.TryGetValue("setName", out var setName) || string.IsNullOrWhiteSpace(setName.AsString))
                 throw new InvalidOperationException("Persistence tests require a replica set; a standalone mongod cannot run these transactions.");
 
-            foreach (var collection in new[] { "products", "receptions", "items", "customers", "demo_sales", "email_log" })
+            foreach (var collection in new[] { "products", "receptions", "items", "product_codes", "customers",
+                "account_balances", "loyalty_coupons", "demo_sales", "email_log" })
                 await database._database.CreateCollectionAsync(collection, cancellationToken: database.Token);
             return database;
         }
@@ -150,6 +152,30 @@ internal sealed class MongoTestDatabase : IAsyncDisposable
         await Customers.AddAsync(customer, Token);
         return customer;
     }
+
+    public CheckoutAttempt NewAttempt(string? accountId = MemberId, string? attemptId = null, string? guestOwner = null) =>
+        new(attemptId ?? Guid.NewGuid().ToString("N"), accountId is null
+            ? guestOwner ?? "guest:" + Guid.NewGuid().ToString("N") : "account:" + accountId, accountId);
+
+    public Task AddBalanceAsync(int points, string accountId = MemberId) =>
+        _database.GetCollection<AccountBalance>("account_balances")
+            .InsertOneAsync(new AccountBalance { AccountId = accountId, Points = points }, cancellationToken: Token);
+
+    public Task<int> ReadBalanceAsync(string accountId = MemberId) =>
+        _observerDatabase.GetCollection<AccountBalance>("account_balances").Find(b => b.AccountId == accountId)
+            .Project(b => b.Points).FirstOrDefaultAsync(Token);
+
+    public Task InsertSalesAsync(params DemoSale[] sales) =>
+        _database.GetCollection<DemoSale>("demo_sales").InsertManyAsync(sales, cancellationToken: Token);
+
+    public Task InsertCouponAsync(LoyaltyCoupon coupon) =>
+        _database.GetCollection<LoyaltyCoupon>("loyalty_coupons").InsertOneAsync(coupon, cancellationToken: Token);
+
+    public Task InsertRawSaleAsync(BsonDocument sale) =>
+        _database.GetCollection<BsonDocument>("demo_sales").InsertOneAsync(sale, cancellationToken: Token);
+
+    public Task<BsonDocument> ReadRawSaleAsync(string id) =>
+        _observerDatabase.GetCollection<BsonDocument>("demo_sales").Find(new BsonDocument("_id", id)).SingleAsync(Token);
 
     // All assertions read through a separate client, outside the operation's transaction.
     public Task<List<Product>> ReadProductsAsync() =>
