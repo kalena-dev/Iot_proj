@@ -1,0 +1,62 @@
+@page
+@model ReportsModel
+@using System.Globalization
+@{
+    ViewData["Title"] = "Reports";
+    var currency = CultureInfo.GetCultureInfo("en-CA");
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero management-hero">
+    <div class="hero__copy"><h1>Reports</h1></div>
+    <a class="secondary-button" asp-page="/Management">Back to management</a>
+</section>
+
+<form method="get" class="panel customer-history-filters customer-history" aria-label="Sales and customer activity period">
+    <label>From <input asp-for="From" type="date" asp-format="{0:yyyy-MM-dd}" /></label>
+    <label>To <input asp-for="To" type="date" asp-format="{0:yyyy-MM-dd}" /></label>
+    <button type="submit" class="primary-button">Apply</button>
+</form>
+<div asp-validation-summary="All" class="field-error"></div>
+
+@if (ViewData.ModelState.IsValid)
+{
+    <section class="panel products-panel customer-history">
+        <div class="panel__heading"><h2>Sales</h2></div>
+        <dl class="management-summary">
+            <div class="management-stat"><dt>Total revenue</dt><dd>@Model.Revenue.ToString("C", currency)</dd></div>
+            @if (Model.Sales.FirstOrDefault() is { Units: > 0 } top)
+            {
+                var bottom = Model.Sales[^1];
+                <div class="management-stat"><dt>Most sold</dt><dd>@string.Join(", ", Model.Sales.Where(product => product.Units == top.Units).Select(product => product.Name)) (@top.Units)</dd></div>
+                <div class="management-stat"><dt>Least sold</dt><dd>@string.Join(", ", Model.Sales.Where(product => product.Units == bottom.Units).Select(product => product.Name)) (@bottom.Units)</dd></div>
+            }
+        </dl>
+        <div class="table-scroll" role="region" aria-label="Units sold by product" tabindex="0">
+            <table class="products-table">
+                <thead><tr><th scope="col">Product</th><th scope="col">Code</th><th scope="col" class="num">Units sold</th></tr></thead>
+                <tbody>
+                    @foreach (var product in Model.Sales)
+                    {
+                        <tr><td>@product.Name</td><td>@product.Code</td><td class="num">@product.Units</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel products-panel customer-history">
+        <div class="panel__heading"><h2>Customer activity</h2></div>
+        <dl class="management-summary">
+            <div class="management-stat"><dt>Purchasing customers</dt><dd>@Model.Customers</dd></div>
+            <div class="management-stat"><dt>New</dt><dd>@(Model.Customers - Model.ReturningCustomers)</dd></div>
+            <div class="management-stat"><dt>Returning</dt><dd>@Model.ReturningCustomers</dd></div>
+        </dl>
+        @if (Model.BusiestDay is { } busiest && Model.QuietestDay is { } quietest)
+        {
+            <p>Busiest day <strong>@busiest.Date.ToString("MMM d, yyyy")</strong> (@busiest.Customers)</p>
+            <p>Quietest day <strong>@quietest.Date.ToString("MMM d, yyyy")</strong> (@quietest.Customers)</p>
+        }
+        <p class="management-muted">Counts use unique identified customers and include days with no purchases. Returning customers purchased before the selected period.</p>
+    </section>
+}

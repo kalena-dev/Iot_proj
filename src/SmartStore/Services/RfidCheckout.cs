@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using SmartStore.Data;
+using SmartStore.Models;
 using Microsoft.Extensions.Options;
 
 namespace SmartStore.Services;
@@ -11,13 +12,13 @@ public sealed class RfidOptions
     public string ApiKey { get; set; } = "";
 }
 
-public sealed record RfidTag(string Epc, string Code);
-public sealed record RfidBatch(string? Session, string[]? Epcs);
+public sealed record RfidTag(string Epc, string Code, string? ScanId = null);
+public sealed record RfidBatch(string? Session, string[]? Epcs, Guid? ScanId = null);
 
 // One process, one checkout session per page. No native reader SDK dependencies.
 public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clock)
 {
-    private sealed record Session(DateTimeOffset Expires, Dictionary<string, RfidTag> Tags);
+    private sealed record Session(DateTimeOffset Expires, bool IsReceiving, Dictionary<string, RfidTag> Tags);
     private readonly Dictionary<string, Session> sessions = new();
     private readonly object gate = new();
     public bool IsSimulation => options.Value.Mode == "Simulation";
@@ -31,7 +32,7 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
                 SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
     }
 
-    public string Open()
+    public string Open(bool receiving = false)
     {
         lock (gate)
         {
@@ -39,15 +40,32 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
                 sessions.Remove(key);
             if (sessions.Count >= 100) throw new InvalidOperationException("RFID session capacity reached. Try again later.");
             var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-            sessions[token] = new(clock.GetUtcNow().AddMinutes(30), new(StringComparer.Ordinal));
+            sessions[token] = new(clock.GetUtcNow().AddMinutes(30), receiving, new(StringComparer.Ordinal));
             return token;
         }
     }
 
-    public RfidTag[]? Read(string token)
+    public string PairLocal(HttpContext context, bool receiving = false)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        if (!IsReader) return "";
+        var token = Open(receiving);
+        var pairingFile = Environment.GetEnvironmentVariable("RFID_LOCAL_PAIRING_FILE");
+        var peer = context.Connection.RemoteIpAddress;
+        if (!string.IsNullOrEmpty(pairingFile) && peer is not null && System.Net.IPAddress.IsLoopback(peer))
+        {
+            var temporaryFile = pairingFile + "." + Guid.NewGuid().ToString("N");
+            File.WriteAllText(temporaryFile, token);
+            File.Move(temporaryFile, pairingFile, overwrite: true);
+        }
+        return token;
+    }
+
+    public RfidTag[]? Read(string token, bool receiving = false)
     {
         lock (gate)
-            return sessions.TryGetValue(token, out var session) && session.Expires > clock.GetUtcNow()
+            return sessions.TryGetValue(token, out var session) && session.IsReceiving == receiving &&
+                session.Expires > clock.GetUtcNow()
                 ? session.Tags.Values.ToArray() : null;
     }
 
@@ -57,19 +75,29 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
             throw new ArgumentException("Supply a session and between 1 and 100 EPCs.");
         // Validate the whole batch before changing session state.
         var epcs = batch.Epcs.Select(Normalize).Distinct().ToArray();
-        if (Read(batch.Session) is null) return false;
+        if (batch.ScanId is not null && epcs.Length != 1)
+            throw new ArgumentException("Supply exactly one EPC per scan ID.");
+        Session? active;
+        lock (gate)
+        {
+            if (!sessions.TryGetValue(batch.Session, out active) || active.Expires <= clock.GetUtcNow())
+                return false;
+        }
         var mapped = new List<RfidTag>();
         foreach (var epc in epcs)
         {
-            var code = await resolve(epc) ?? throw new ArgumentException("An EPC has no stored product mapping.");
-            mapped.Add(new(epc, code));
+            var code = active.IsReceiving ? "" :
+                await resolve(epc) ?? throw new ArgumentException("An EPC has no stored product mapping.");
+            mapped.Add(new(epc, code, active.IsReceiving ? null : batch.ScanId?.ToString("N")));
         }
         lock (gate)
         {
             if (!sessions.TryGetValue(batch.Session, out var session) || session.Expires <= clock.GetUtcNow()) return false;
-            if (session.Tags.Keys.Union(epcs).Count() > 100)
+            var limit = session.IsReceiving ? ReceptionInput.MaxTags : 100;
+            var keys = mapped.Select(tag => tag.ScanId is { } id ? "scan:" + id : tag.Epc);
+            if (session.Tags.Keys.Union(keys).Count() > limit)
                 throw new ArgumentException("Session tag limit reached.");
-            foreach (var tag in mapped) session.Tags.TryAdd(tag.Epc, tag);
+            foreach (var tag in mapped) session.Tags.TryAdd(tag.ScanId is { } id ? "scan:" + id : tag.Epc, tag);
             return true;
         }
     }

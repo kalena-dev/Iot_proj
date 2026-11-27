@@ -1,0 +1,76 @@
+@page
+@model ProfileModel
+@using System.Globalization
+@using SmartStore.Services
+@{
+    ViewData["Title"] = "My account";
+    var currency = CultureInfo.GetCultureInfo("en-CA");
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero management-hero">
+    <div class="hero__copy">
+        <h1>My account</h1>
+        <p class="account-email">@Model.Email</p>
+    </div>
+    <div class="products-actions">
+        <a asp-page="/Checkout" class="primary-button">Go to self-checkout</a>
+    </div>
+</section>
+
+<dl class="management-summary">
+    <div class="panel management-stat">
+        <dt>Loyalty points</dt>
+        <dd>@Model.Points.ToString("N0")</dd>
+        <details open="@(Model.CouponError ? "open" : null)">
+            <summary>Get coupon</summary>
+            <form method="post" asp-page-handler="RedeemCoupon">
+                @foreach (var reward in StoreDemo.Rewards)
+                {
+                    <button class="checkout-small-button" type="submit" name="percent" value="@reward.Percent"
+                            disabled="@(Model.Points < reward.Points)">@reward.Percent% off · @reward.Points points</button>
+                }
+            </form>
+        </details>
+        <p>Available coupons: @Model.CouponCount</p>
+        @if (Model.CouponMessage is { } message)
+        {
+            <p role="status" class="@(Model.CouponError ? "field-error" : null)">@message</p>
+        }
+    </div>
+    <div class="panel management-stat">
+        <dt>Total spent</dt>
+        <dd>@Model.TotalSpent.ToString("C", currency)</dd>
+        <a asp-page="/Spending" class="secondary-button">Spending</a>
+    </div>
+</dl>
+
+<section class="panel products-panel">
+    <div class="panel__heading">
+        <h2>Recent purchases</h2>
+        <a asp-page="/PurchaseHistory">View full purchase history</a>
+    </div>
+    <partial name="_CustomerReceipts" model="Model.Sales" />
+    @if (Model.Sales.Count > 0)
+    {
+        <nav class="customer-report-pages" aria-label="Recent purchase pages">
+            @if (Model.RecentPage > 1)
+            {
+                <a class="customer-page-arrow" asp-route-recentPage="@(Model.RecentPage - 1)" aria-label="Previous page">‹</a>
+            }
+            else
+            {
+                <span class="customer-page-arrow" aria-hidden="true">‹</span>
+            }
+            <span>Page @Model.RecentPage of @Model.RecentPageCount</span>
+            @if (Model.RecentPage < Model.RecentPageCount)
+            {
+                <a class="customer-page-arrow" asp-route-recentPage="@(Model.RecentPage + 1)" aria-label="Next page">›</a>
+            }
+            else
+            {
+                <span class="customer-page-arrow" aria-hidden="true">›</span>
+            }
+        </nav>
+    }
+</section>

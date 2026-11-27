@@ -1,0 +1,89 @@
+@page
+@model SpendingModel
+@using System.Globalization
+@{
+    ViewData["Title"] = "Spending";
+    var currency = CultureInfo.GetCultureInfo("en-CA");
+    var views = new[] { ("daily", "Today"), ("weekly", "This week"), ("monthly", "This month"), ("yearly", "This year") };
+    var total = Model.Periods.Sum(period => period.Amount);
+    var isMonth = Model.View == "monthly";
+    var periodName = Model.View switch { "daily" => "day", "weekly" => "week", "yearly" => "year", _ => "month" };
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero management-hero">
+    <div class="hero__copy"><h1>Spending</h1></div>
+    <a class="secondary-button" asp-page="/Profile">Back to my account</a>
+</section>
+
+<div class="spending-layout">
+<section class="panel products-panel spending-main">
+    <div class="panel__heading spending-heading"><h2>@Model.Heading</h2>
+        <strong>@total.ToString("C", currency) spent</strong>
+    </div>
+    <nav class="customer-report-pages" aria-label="Spending view">
+        @foreach (var (view, label) in views)
+        {
+            <a asp-route-view="@view"
+               aria-current="@(Model.View == view ? "true" : null)">@label</a>
+        }
+    </nav>
+    <nav class="customer-report-pages" aria-label="Calendar navigation">
+        @if (Model.Previous is { } previous)
+        {
+            <a asp-route-view="@Model.View" asp-route-date="@previous.ToString("yyyy-MM-dd")">Previous @periodName</a>
+        }
+        @if (Model.Next is { } next)
+        {
+            <a asp-route-view="@Model.View" asp-route-date="@next.ToString("yyyy-MM-dd")">Next @periodName</a>
+        }
+    </nav>
+
+    <div class="spending-calendar @(isMonth ? "spending-calendar--daily" : "")" aria-label="Spending calendar">
+        @if (isMonth)
+        {
+            @foreach (var weekday in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" })
+            {
+                <span class="spending-weekday">@weekday</span>
+            }
+            @for (var day = 0; day < Model.CalendarOffset; day++)
+            {
+                <span aria-hidden="true"></span>
+            }
+        }
+        @foreach (var period in Model.Periods)
+        {
+            <a class="spending-calendar-entry @(period.Amount > 0 ? "spending-calendar-entry--active" : "")" asp-page="/PurchaseHistory"
+               asp-route-from="@period.Start.ToString("yyyy-MM-dd")" asp-route-to="@period.End.AddDays(-1).ToString("yyyy-MM-dd")"
+               aria-label="@($"{period.Label}, {period.Amount.ToString("C", currency)} spent")">
+                <span>@(isMonth ? period.Start.Day.ToString() : period.Label)</span>
+                @if (period.Amount > 0 || !isMonth)
+                {
+                    <strong>@period.Amount.ToString("C", currency)</strong>
+                }
+            </a>
+        }
+    </div>
+</section>
+
+<div class="spending-sidebar">
+    @if (isMonth)
+    {
+        <section class="panel products-panel spending-budget" data-budget-key="@Model.BudgetKey"
+                 data-spent="@total.ToString(CultureInfo.InvariantCulture)" aria-labelledby="spending-budget-heading">
+            <div class="panel__heading"><h2 id="spending-budget-heading">Monthly budget</h2></div>
+            <div class="spending-budget-body">
+                <label for="spending-budget-target">Target (CAD)</label>
+                <input id="spending-budget-target" type="number" min="0" max="1000000" step=".01" placeholder="Set a target" />
+                <p class="spending-budget-message" aria-live="polite" hidden></p>
+                <progress class="spending-budget-progress" aria-label="Monthly budget used" max="100" hidden></progress>
+            </div>
+        </section>
+        <script src="~/js/spending.js" asp-append-version="true" defer></script>
+    }
+    <section class="panel products-panel">
+        <div class="panel__heading"><h2>@(isMonth ? "Weekly spending" : "Spending breakdown")</h2></div>
+        <partial name="_CustomerChart" model="Model.Chart" />
+    </section>
+</div>
+</div>

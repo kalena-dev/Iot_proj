@@ -1,31 +1,76 @@
-﻿<!DOCTYPE html>
+﻿@using SmartStore.Services
+@inject IConfiguration Configuration
+@{
+    var signedIn = User.Identity?.IsAuthenticated == true;
+    var isStaff = StoreAccounts.IsStaff(User, Configuration);
+    var homePage = isStaff ? "/Management" : signedIn ? "/Checkout" : "/Login";
+}
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f4f6f8" />
+    <meta name="theme-color" content="#f3f5f6" />
     <title>@ViewData["Title"] · Northstar Smart Store</title>
+    <script src="~/js/theme.js" asp-append-version="true"></script>
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 </head>
 <body>
     <header class="site-header">
         <div class="shell site-header__inner">
-            <a class="brand" asp-page="/Index" aria-label="Northstar Smart Store home">
+            <a class="brand" asp-page="@homePage" aria-label="Northstar Smart Store home">
                 <span class="brand__mark" aria-hidden="true">
                     <svg viewBox="0 0 28 28"><path d="M14 3 4.5 8.5v11L14 25l9.5-5.5v-11L14 3Z" /><path d="m9 15 3 3 7-8" /></svg>
                 </span>
                 <span><strong>Northstar</strong><small>Smart store demo</small></span>
             </a>
             <nav class="demo-nav" aria-label="Store navigation">
-                <a asp-page="/Checkout">Self-checkout</a>
-                <a asp-page="/Management">Management</a>
-                <a asp-page="/Products/Index">Products</a>
-                <a asp-page="/Refrigerators">Refrigeration</a>
-                <a asp-page="/Index">Customer registry</a>
+                @if (signedIn)
+                {
+                    <a asp-page="/Checkout">Self-checkout</a>
+                    @if (isStaff)
+                    {
+                        <a asp-page="/Management">Management</a>
+                        <a asp-page="/Products/Index">Products</a>
+                        <a asp-page="/Refrigerators">Refrigeration</a>
+                        <a asp-page="/Sensor">Sensor</a>
+                        <a asp-page="/Index">Customer registry</a>
+                    }
+                }
+                else
+                {
+                    <a asp-page="/Login">Sign in</a>
+                    <a asp-page="/Register">Create account</a>
+                }
             </nav>
             <div class="header-meta">
-                <span class="course-code">420-521-VA</span>
-                <span class="device-state"><i aria-hidden="true"></i> Raspberry Pi 5</span>
+                @if (isStaff)
+                {
+                    <span class="course-code">420-521-VA</span>
+                    <span class="device-state"><i aria-hidden="true"></i> Raspberry Pi 5</span>
+                }
+                <button class="theme-toggle" type="button" aria-pressed="false" hidden>Dark mode</button>
+                @if (signedIn)
+                {
+                    <details class="account-profile">
+                        <summary aria-label="Account menu">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                                <circle cx="12" cy="8" r="3.2" />
+                                <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
+                            </svg>
+                        </summary>
+                        <div class="account-profile__menu">
+                            <div class="account-profile__identity">
+                                <strong>@(isStaff ? "Staff account" : "Customer account")</strong>
+                                <span>@StoreAccounts.EmailOf(User)</span>
+                            </div>
+                            <a asp-page="/Profile">My account</a>
+                            <form method="post" asp-page="/Logout">
+                                <button type="submit">Sign out</button>
+                            </form>
+                        </div>
+                    </details>
+                }
             </div>
         </div>
     </header>

@@ -1,0 +1,47 @@
+@page
+@model InventoryReportModel
+@{
+    ViewData["Title"] = "Inventory report";
+}
+<link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
+
+<section class="hero management-hero">
+    <div class="hero__copy"><h1>Inventory report</h1></div>
+    <nav class="products-actions" aria-label="Inventory actions">
+        <a class="secondary-button" asp-page="/Management">Back to management</a>
+        <a class="secondary-button" asp-page="/Products/Index">Manage products</a>
+        <a class="primary-button" asp-page="/Products/Receive">Receive stock</a>
+    </nav>
+</section>
+<section class="panel products-panel" data-inventory-url="@Url.Page("/InventoryReport", "Stock")">
+    <div class="customer-history-filters">
+        <label>Product name or UPC <input type="search" data-inventory-search /></label>
+        <label>Stock status
+            <select data-inventory-filter>
+                <option value="">All products</option>
+                <option value="stock--ok">In stock</option>
+                <option value="stock--low">Low stock</option>
+                <option value="stock--out">Out of stock</option>
+            </select>
+        </label>
+        <span data-inventory-status role="status"></span>
+    </div>
+    <div class="table-scroll" role="region" aria-label="Inventory quantities" tabindex="0">
+        <table class="products-table">
+            <thead>
+                <tr><th scope="col">Product</th><th scope="col">UPC</th><th scope="col" class="num">Available units</th><th scope="col">Status</th></tr>
+            </thead>
+            <tbody data-inventory-rows>
+                @foreach (var product in Model.Products)
+                {
+                    <tr data-stock-class="@product.StockClass">
+                        <th scope="row">@product.Name</th><td>@product.Code</td><td class="num">@product.Stock</td>
+                        <td><span class="stock @product.StockClass">@product.Status</span></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <p class="management-empty" data-inventory-empty hidden="@(Model.Products.Count > 0)">No matching products.</p>
+</section>
+<script src="~/js/inventory-report.js" asp-append-version="true" defer></script>

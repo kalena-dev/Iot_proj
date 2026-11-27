@@ -21,6 +21,10 @@
   const error = document.querySelector('#scan-error');
   const list = document.querySelector('#cart-list');
   const total = document.querySelector('#cart-total');
+  const couponButton = document.querySelector('#add-coupon');
+  const couponPanel = document.querySelector('#checkout-coupons');
+  const couponSelect = document.querySelector('#CouponId');
+  const couponBreakdown = document.querySelector('#coupon-breakdown');
   const checkout = document.querySelector('#checkout-button');
   const rfidButton = document.querySelector('#rfid-scan');
   const rfidStatus = document.querySelector('#rfid-status');
@@ -59,7 +63,7 @@
       const product = products.get(code);
       if (!product) continue;
 
-      amount += quantity * product.price;
+      amount += quantity * Math.round(product.price * 100);
 
       const row = document.createElement('div');
       row.className = 'demo-cart-row';
@@ -83,7 +87,7 @@
           delete cart[code];
         }
 
-        // Keep seen EPCs suppressed after removal until a new checkout session.
+        // A previously processed scan event is still a duplicate after removal.
         error.textContent = '';
         render();
       });
@@ -96,7 +100,15 @@
       list.textContent = 'No items yet.';
     }
 
-    total.textContent = money(amount);
+    const percent = Number(couponSelect?.selectedOptions[0]?.dataset.percent || 0);
+    const discount = Math.round(amount * percent / 100);
+    if (couponBreakdown) {
+      couponBreakdown.hidden = percent === 0;
+      document.querySelector('#coupon-label').textContent = `Loyalty coupon (${percent}%)`;
+      document.querySelector('#cart-subtotal').textContent = money(amount / 100);
+      document.querySelector('#cart-discount').textContent = `−${money(discount / 100)}`;
+    }
+    total.textContent = money((amount - discount) / 100);
 
     checkout.disabled =
       Object.keys(cart).length === 0;
@@ -145,6 +157,7 @@
   }
 
   function resetMatch() {
+    if (!matchLabel) return;
     matchLabel.hidden = true;
     matchSelect.value = '';
   }
@@ -158,7 +171,7 @@
     }
     scanPending = true;
     try {
-      const assigning = !matchLabel.hidden && Boolean(matchSelect.value);
+      const assigning = matchLabel && !matchLabel.hidden && Boolean(matchSelect.value);
       const response = assigning
         ? await fetch('?handler=AssignCode', { method: 'POST', body: new URLSearchParams({
             code: barcode, upc: matchSelect.value,
@@ -167,6 +180,7 @@
         : await fetch('?handler=Code&code=' + encodeURIComponent(barcode), { cache: 'no-store' });
       if (codeInput.value.trim() !== barcode) return;
       if (!assigning && response.status === 404) {
+        if (!matchLabel) throw new Error('This code is not in inventory. Choose an available product or ask store staff.');
         matchLabel.hidden = false;
         error.textContent = 'Choose a product for this code, then select Add item to save it.';
         matchSelect.focus();
@@ -199,7 +213,12 @@
     resetMatch();
     error.textContent = '';
   });
-  document.querySelector('#add-item').addEventListener('click', addManual);
+  couponButton.addEventListener('click', () => {
+    couponPanel.hidden = !couponPanel.hidden;
+    couponButton.setAttribute('aria-expanded', String(!couponPanel.hidden));
+    if (!couponPanel.hidden) couponSelect?.focus();
+  });
+  couponSelect?.addEventListener('change', render);
 
   codeInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
@@ -224,18 +243,20 @@
     const uniqueTags = new Map();
 
     for (const tag of tags) {
-      if (tag.epc && !uniqueTags.has(tag.epc)) {
-        uniqueTags.set(tag.epc, tag);
+      const scanKey = tag.scanId ? `scan:${tag.scanId}` : tag.epc;
+      if (tag.epc && !uniqueTags.has(scanKey)) {
+        uniqueTags.set(scanKey, tag);
       }
     }
 
-    for (const tag of uniqueTags.values()) {
+    for (const [scanKey, tag] of uniqueTags) {
      
-      if (scannedTags.has(tag.epc)) {
+      if (scannedTags.has(scanKey)) {
         duplicates++;
         continue;
       }
 
+      scannedTags.set(scanKey, tag.code);
       const product = products.get(tag.code);
 
       if (!product) {
@@ -295,12 +316,13 @@
       }
       if (!response.ok) throw new Error('Reader bridge unavailable');
       const tags = await response.json();
-      if (tags.length) processRfidScan(tags);
-      else rfidStatus.textContent = 'Waiting for RFID events. No tags received.';
+      const newTags = tags.filter(tag => !scannedTags.has(tag.scanId ? `scan:${tag.scanId}` : tag.epc));
+      if (newTags.length) processRfidScan(newTags);
+      else if (!tags.length) rfidStatus.textContent = 'Waiting for RFID events. No tags received.';
     } catch {
       rfidStatus.textContent = 'RFID bridge unavailable. Manual checkout is still available.';
     }
-    window.setTimeout(pollReader, 1500);
+    window.setTimeout(pollReader, 350);
   }
   if (scanner.dataset.mode === 'reader' && scanner.dataset.session) pollReader();
 
@@ -328,7 +350,6 @@
   const title = document.getElementById('checkout-detail-title');
   const body = document.getElementById('checkout-detail-body');
   const receiptButton = document.getElementById('show-receipt');
-  const money = amount => new Intl.NumberFormat('en-CA', {style:'currency', currency:'CAD'}).format(amount);
   const showError = message => { body.textContent = message; };
   const showPanel = name => { title.textContent = name; detail.hidden = false; body.replaceChildren(); };
   document.getElementById('close-checkout-detail').addEventListener('click', () => { detail.hidden = true; });
@@ -360,43 +381,4 @@
   }
   receiptButton.addEventListener('click', () => displayReceipt(receiptButton.dataset.receiptId));
   if (receiptButton.dataset.receiptId) displayReceipt(receiptButton.dataset.receiptId);
-
-  document.getElementById('show-history').addEventListener('click', () => {
-    showPanel('Purchase history');
-    const form = document.createElement('form');
-    form.className = 'checkout-history-form';
-    const input = document.createElement('input');
-    input.type = 'email'; input.required = true; input.maxLength = 254;
-    input.placeholder = 'Email used at checkout';
-    input.value = document.getElementById('CustomerEmail')?.value || '';
-    const search = document.createElement('button');
-    search.type = 'submit'; search.className = 'checkout-small-button'; search.textContent = 'Search';
-    const results = document.createElement('div');
-    results.className = 'checkout-history-results';
-    form.append(input, search); body.append(form, results);
-    form.addEventListener('submit', async event => {
-      event.preventDefault(); results.textContent = 'Loading purchases…';
-      try {
-        const response = await fetch(`?handler=History&email=${encodeURIComponent(input.value.trim())}`);
-        if (!response.ok) throw new Error('Could not load history. Check the email and database connection.');
-        const sales = await response.json();
-        results.replaceChildren();
-        if (!sales.length) { results.textContent = 'No purchases found for this email.'; return; }
-        sales.forEach(sale => {
-          const row = document.createElement('div'); row.className = 'checkout-history-row';
-          const summary = document.createElement('div');
-          const date = new Date(sale.date).toLocaleDateString('en-CA');
-          const heading = document.createElement('strong'); heading.textContent = `${money(sale.total)} · ${sale.status}`;
-          const sub = document.createElement('small'); sub.textContent = `${date} · ${sale.points} points`;
-          summary.append(heading, sub); row.append(summary);
-          if (sale.status === 'approved') {
-            const view = document.createElement('button');
-            view.type = 'button'; view.className = 'checkout-small-button'; view.textContent = 'Receipt';
-            view.addEventListener('click', () => displayReceipt(sale.id)); row.append(view);
-          }
-          results.append(row);
-        });
-      } catch (error) { results.textContent = error.message; }
-    });
-  });
 })();

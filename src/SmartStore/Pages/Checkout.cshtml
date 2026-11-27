@@ -13,17 +13,20 @@
     <div class="checkout-layout">
         <section class="checkout-card checkout-cart" aria-label="Shopping cart">
             <div class="checkout-card-head"><div><span class="checkout-step">01 / SHOPPING CART</span><h2>Your cart</h2></div><span class="checkout-chip">Ready to scan</span></div>
-            <div class="checkout-scan"><label for="item-code">Barcode, EPC, or product code</label><div class="checkout-scan-line"><input id="item-code" type="text" spellcheck="false" autocomplete="off" placeholder="Scan or type a code" autofocus /><button type="button" class="primary-button" id="add-item">Add item</button></div></div>
-            <label id="barcode-match" hidden>
-                Choose the product to save this code in inventory
-                <select id="barcode-product">
-                    <option value="">Select a product</option>
-                    @foreach (var item in Model.Products)
-                    {
-                        <option value="@item.Code">@item.Name (@item.Code)</option>
-                    }
-                </select>
-            </label>
+            <div class="checkout-scan"><label for="item-code">Barcode, EPC, or product code</label><div class="checkout-scan-line"><input id="item-code" type="text" spellcheck="false" autocomplete="off" placeholder="Scan or type a code and press Enter" autofocus /><button type="button" class="primary-button" id="add-coupon" aria-expanded="false" aria-controls="checkout-coupons">Add coupon</button></div></div>
+            @if (Model.CanAssignCodes)
+            {
+                <label id="barcode-match" hidden>
+                    Choose the product to save this code in inventory
+                    <select id="barcode-product">
+                        <option value="">Select a product</option>
+                        @foreach (var item in Model.Products)
+                        {
+                            <option value="@item.Code">@item.Name (@item.Code)</option>
+                        }
+                    </select>
+                </label>
+            }
             <div class="checkout-rfid rfid-scanner" data-mode="@(Model.SimulationMode ? "simulation" : "reader")" data-session="@Model.RfidSession">
                 @if (Model.SimulationMode)
                 {
@@ -37,12 +40,37 @@
             </div>
             <p id="scan-error" role="alert" class="field-error"></p>
             <div id="cart-list" class="checkout-cart-list" aria-live="polite">No items yet.</div>
-            <div class="checkout-total"><span>Order total</span><strong id="cart-total">$0.00</strong></div>
             <form method="post" id="checkout-form" class="checkout-form">
                 <input type="hidden" asp-for="Cart" />
-                <label for="CustomerEmail">Email for receipt <span>(optional)</span></label>
-                <input asp-for="CustomerEmail" type="email" maxlength="254" placeholder="Enter your email address" />
-                <p class="checkout-points-note">Enter your email to receive a receipt and earn loyalty points. Your first approved purchase creates your loyalty account.</p>
+                <div id="checkout-coupons" hidden>
+                    @if (Model.Coupons.Count > 0)
+                    {
+                        <label asp-for="CouponId">Loyalty coupon</label>
+                        <select asp-for="CouponId">
+                            <option value="">No coupon</option>
+                            @foreach (var coupon in Model.Coupons)
+                            {
+                                <option value="@coupon.Id" data-percent="@coupon.Percent">@coupon.Percent% off</option>
+                            }
+                        </select>
+                    }
+                    else if (Model.CouponWarning is { } couponWarning)
+                    {
+                        <p role="status">@couponWarning</p>
+                    }
+                    else
+                    {
+                        <p>No coupons available. <a asp-page="/Profile">Redeem points in My account</a>.</p>
+                    }
+                </div>
+                <div id="coupon-breakdown" hidden>
+                    <div class="demo-cart-row"><span>Subtotal</span><strong id="cart-subtotal"></strong></div>
+                    <div class="demo-cart-row"><span id="coupon-label">Loyalty coupon</span><strong id="cart-discount"></strong></div>
+                </div>
+                <div class="checkout-total" aria-live="polite"><span>Order total</span><strong id="cart-total">$0.00</strong></div>
+                <label for="receipt-email">Account email</label>
+                <input id="receipt-email" type="email" value="@Model.AccountEmail" readonly />
+                <p class="checkout-points-note">Approved purchases earn points on the amount paid and send receipts to this email.</p>
                 <label for="PaymentResult">Simulated payment</label>
                 <select asp-for="PaymentResult"><option value="approve">Approve payment</option><option value="decline">Decline payment</option></select>
                 <button type="submit" class="primary-button checkout-submit" id="checkout-button" disabled>Complete checkout</button>
@@ -64,7 +92,7 @@
             }
             <div class="checkout-record-actions">
                 <button type="button" id="show-receipt" class="checkout-action" data-receipt-id="@Model.ReceiptId" @(string.IsNullOrEmpty(Model.ReceiptId) ? "disabled" : null)><span>▤</span><span><strong>View receipt</strong><small>See itemized transaction</small></span><span class="checkout-chevron">›</span></button>
-                <button type="button" id="show-history" class="checkout-action"><span>◷</span><span><strong>Purchase history</strong><small>Find previous transactions</small></span><span class="checkout-chevron">›</span></button>
+                <a asp-page="/Profile" class="checkout-action"><span aria-hidden="true">◷</span><span><strong>My purchases</strong><small>Purchase history and loyalty points</small></span><span class="checkout-chevron" aria-hidden="true">›</span></a>
             </div>
             <div id="checkout-detail" class="checkout-detail" hidden>
                 <div class="checkout-detail-head"><h3 id="checkout-detail-title">Details</h3><button type="button" id="close-checkout-detail" aria-label="Close details">×</button></div>

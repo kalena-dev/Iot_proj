@@ -3,7 +3,10 @@
 @{ ViewData["Title"] = Model.ViewLog == "email" ? "Email log" : "Checkout transactions"; }
 <link rel="stylesheet" href="~/css/products.css" asp-append-version="true" />
 <section class="panel products-panel">
-<h1>@ViewData["Title"]</h1>
+<div class="panel__heading">
+    <h1>@ViewData["Title"]</h1>
+    <a class="secondary-button" asp-page="/Management">Back to management</a>
+</div>
 <p><a asp-page="/Records">Transactions</a> · <a asp-page="/Records" asp-route-viewLog="email">Email log</a></p>
 @if (Model.ViewLog == "email")
 {
@@ -29,9 +32,25 @@ else
     </tbody></table></div>
     @if (Model.Sales.Count == 0) { <p>No transactions on this page.</p> }
 }
-<nav aria-label="Record pages">
-    @if (Model.PageNumber > 1) { <a asp-route-pageNumber="@(Model.PageNumber - 1)" asp-route-viewLog="@Model.ViewLog">Previous</a> }
+<nav class="customer-report-pages" aria-label="Record pages">
+    @if (Model.PageNumber > 1)
+    {
+        <a class="customer-page-arrow" asp-route-pageNumber="@(Model.PageNumber - 1)"
+           asp-route-viewLog="@Model.ViewLog" aria-label="Previous page">‹</a>
+    }
+    else
+    {
+        <span class="customer-page-arrow" aria-hidden="true">‹</span>
+    }
     <span>Page @Model.PageNumber</span>
-    @if (Model.HasNext) { <a asp-route-pageNumber="@(Model.PageNumber + 1)" asp-route-viewLog="@Model.ViewLog">Next</a> }
+    @if (Model.HasNext)
+    {
+        <a class="customer-page-arrow" asp-route-pageNumber="@(Model.PageNumber + 1)"
+           asp-route-viewLog="@Model.ViewLog" aria-label="Next page">›</a>
+    }
+    else
+    {
+        <span class="customer-page-arrow" aria-hidden="true">›</span>
+    }
 </nav>
 </section>

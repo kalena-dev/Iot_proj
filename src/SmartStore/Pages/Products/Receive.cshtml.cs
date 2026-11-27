@@ -2,10 +2,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using SmartStore.Data;
 using SmartStore.Models;
+using SmartStore.Services;
 
 namespace SmartStore.Pages.Products;
 
-public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveModel> logger) : PageModel
+public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveModel> logger, RfidCheckout rfid) : PageModel
 {
     [BindProperty] public ReceptionInput Input { get; set; } = new();
     [BindProperty(SupportsGet = true)] public string? Code { get; set; }
@@ -16,6 +17,8 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
     public IReadOnlyList<Item> TaggedItems { get; private set; } = [];
     public int TaggedInStock { get; private set; }
     public string? DatabaseWarning { get; private set; }
+    public string RfidSession { get; private set; } = "";
+    public bool SimulationMode => rfid.IsSimulation;
 
     [TempData] public string? StatusMessage { get; set; }
     [TempData] public string? StatusKind { get; set; }
@@ -42,7 +45,11 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
                 SetStatus("That product no longer exists. It may have been deleted.", "error");
                 return RedirectToPage(new { id = (string?)null });
             }
-            if (Selected is not null) Input.ProductId = Selected.Id!;
+            if (Selected is not null)
+            {
+                Input.ProductId = Selected.Id!;
+                RfidSession = rfid.PairLocal(HttpContext, receiving: true);
+            }
         }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {
@@ -50,6 +57,13 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
             DatabaseWarning = "Products are unavailable. Check the MongoDB connection.";
         }
         return Page();
+    }
+
+    public IActionResult OnGetRfid()
+    {
+        Response.Headers.CacheControl = "no-store";
+        var tags = rfid.Read(Request.Headers["X-Rfid-Session"].ToString(), receiving: true);
+        return tags is null ? NotFound() : new JsonResult(tags.Select(tag => tag.Epc));
     }
 
     public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
@@ -104,7 +118,11 @@ public sealed class ReceiveModel(IProductRepository repository, ILogger<ReceiveM
             return RedirectToPage(new { id = Input.ProductId });
         }
 
-        try { await LoadAsync(Input.ProductId, cancellationToken); }
+        try
+        {
+            await LoadAsync(Input.ProductId, cancellationToken);
+            if (Selected is not null) RfidSession = rfid.PairLocal(HttpContext, receiving: true);
+        }
         catch (Exception exception) when (exception is TimeoutException or MongoDB.Driver.MongoException)
         {
             logger.LogWarning(exception, "Cannot reload receiving page.");

@@ -1,0 +1,48 @@
+@page
+@model SensorModel
+@{
+    ViewData["Title"] = "Sensor";
+    var widgets = new (string Key, string Title, string Icon)[]
+    {
+        ("temperature", "Temperature", "M10 14.8V5a2 2 0 0 1 4 0v9.8a4 4 0 1 1-4 0ZM12 10v8"),
+        ("humidity", "Humidity", "M12 3c-3 4-6 7.3-6 11a6 6 0 0 0 12 0c0-3.7-3-7-6-11Zm-3 12a3 3 0 0 0 3 3"),
+        ("illuminance", "Light intensity", "M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4m0-12.8L17 7M7 17l-1.4 1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"),
+        ("motion", "Motion detection", "M3 12h3l3-6 4 12 3-6h5")
+    };
+}
+
+<section class="hero">
+    <div class="hero__copy">
+        <h1>Minew MSP01 sensor</h1>
+        <p>Monitor the store’s temperature, humidity, ambient light, and motion.</p>
+    </div>
+</section>
+
+<section class="panel form-panel" aria-labelledby="sensor-readings-heading" data-sensor-url="@Url.Page("/Sensor", "Readings")">
+    <div class="sensor-heading">
+        <h2 id="sensor-readings-heading">Sensor readings</h2>
+        <span class="sensor-status-line" id="sensor-status" role="status">Waiting for sensor data</span>
+    </div>
+    <div class="sensor-widgets">
+        @foreach (var widget in widgets)
+        {
+            <section class="sensor-card sensor-card--@widget.Key" aria-labelledby="sensor-@widget.Key" data-sensor-card="@widget.Key">
+                <div class="sensor-card__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="@widget.Icon" /></svg>
+                </div>
+                <h3 id="sensor-@widget.Key">@widget.Title</h3>
+                <p class="sensor-value">—</p>
+                <p class="sensor-card__meta">No reading yet</p>
+            </section>
+        }
+    </div>
+    <div class="sensor-footer">
+        <span data-sensor-cadence></span>
+        <span id="sensor-motion-history">Motion events observed while this page is open appear here.</span>
+    </div>
+    <noscript><p>Enable JavaScript to refresh sensor readings.</p></noscript>
+</section>
+
+@section Scripts {
+    <script src="~/js/sensor.js" asp-append-version="true"></script>
+}

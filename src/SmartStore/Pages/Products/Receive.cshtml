@@ -65,9 +65,19 @@ else
                                       placeholder="One EPC per line, e.g. E28011606000020A1B2C3D4E" data-receive-tags
                                       autofocus="@(Model.Selected is not null)"></textarea>
                             <div class="receive-rfid">
-                                <button type="button" class="secondary-button" data-simulate-tags>Add 3 test tags</button>
+                                @if (Model.SimulationMode)
+                                {
+                                    <button type="button" class="secondary-button" data-simulate-tags>Add 3 test tags</button>
+                                }
                                 <span data-tag-count role="status">0 tags</span>
-                                <small>Click the box, then scan each unit. The RFID reader (keyboard mode) types one tag per line.</small>
+                                @if (!string.IsNullOrEmpty(Model.RfidSession))
+                                {
+                                    <small data-receive-reader="@Model.RfidSession" role="status">Waiting for the RFID reader. Scan each unit, then review the list before saving.</small>
+                                }
+                                else
+                                {
+                                    <small>Choose a product first. You can also enter EPCs manually or scan into the box with a keyboard-mode reader.</small>
+                                }
                             </div>
                             <span asp-validation-for="Input.Tags" class="field-error"></span>
                         </div>
