@@ -88,6 +88,14 @@ Collections and indexes:
 
 Stock is stored on the product (`quantityInStock`) so checkout can read it in one lookup. It changes only through `ReceiveStockAsync` (adds) and `DecrementStockAsync` (removes, atomically, and refuses if there isn't enough).
 
+At checkout, a paid sale also retires RFID items (`SellOldestFirstAsync`). The cart sends barcode units as `{ "UPC": quantity }` and each scanned tag as `{ "EPC": 1 }`.
+
+- A **scanned tag** is sold as that exact unit (`soldBy: "scan"`).
+- Each unit bought **by barcode** marks the product's oldest in-stock tag (earliest received) as sold (`soldBy: "guess"`). Untagged stock is used only once no tags are left.
+- A guess can be wrong. When a guessed tag is scanned again, at checkout or on Receive, it is put back in stock and the earlier sale's guess moves to the oldest other in-stock tag. If none is left, the earlier sale is counted as an untagged unit, and if there is none of those either, the scan is refused. Stock does not change; only which unit was sold is corrected.
+- A tag sold by scan is final: it can't be sold or received again. Tags are never deleted by a sale.
+- A declined payment changes no stock and no tags.
+
 ## Integrated checkout
 
 `StoreDemo` now injects `IProductRepository`; checkout and management load the same persistent products as `/Products`. There is no separate hardcoded catalog or stock reset on restart.

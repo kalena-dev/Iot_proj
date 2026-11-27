@@ -78,7 +78,7 @@ public interface IProductRepository
     /// <summary>
     /// Removes sold units within the caller's active transaction. Returns false if the product
     /// does not exist or has insufficient stock. The caller must abort on failure.
-    /// This does not mark any RFID item as sold; checkout should move to <see cref="SellAsync"/>.
+    /// This does not mark any RFID item as sold; checkout uses <see cref="SellOldestFirstAsync"/>.
     /// </summary>
     Task<bool> DecrementStockAsync(IClientSessionHandle session, string productId, int quantity,
         CancellationToken cancellationToken = default);
@@ -91,6 +91,16 @@ public interface IProductRepository
     /// <exception cref="InvalidOperationException">A tag was already sold or stock changed.</exception>
     Task SellAsync(IClientSessionHandle session, string productId, int quantity, IReadOnlyCollection<string> epcs,
         string saleId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sells <paramref name="quantity"/> units like <see cref="SellAsync"/>, but when fewer tags were scanned
+    /// than units bought (barcode scans), the remaining units are taken from the product's in-stock tags,
+    /// oldest received first, before any untagged stock, and marked as guesses. A scanned tag that an earlier sale
+    /// only guessed is reclaimed and that sale's guess moves to another unit. Returns every EPC marked as sold.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A tag was already sold or stock changed.</exception>
+    Task<IReadOnlyList<string>> SellOldestFirstAsync(IClientSessionHandle session, string productId, int quantity,
+        IReadOnlyCollection<string> scannedEpcs, string saleId, CancellationToken cancellationToken = default);
 }
 
 public sealed class DuplicateProductCodeException(string field, string value)

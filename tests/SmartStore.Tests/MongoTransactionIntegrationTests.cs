@@ -281,6 +281,104 @@ public sealed class MongoTransactionIntegrationTests
     }
 
     [MongoReplicaSetFact]
+    public async Task BarcodeCheckoutMarksTheOldestTagsSoldAndDeclinedCheckoutLeavesThemInStock()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var product = await db.AddProductAsync();
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(product, 3, "B003"), db.Token);
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(product, 1, "A002", "A001"), db.Token);
+
+        await db.Store.CheckoutAsync(new() { [product.Upc] = 2 }, "decline", null, db.Token);
+        Assert.All(await db.ReadItemsAsync(product), item => Assert.Equal(Item.InStock, item.Status));
+
+        var sale = await db.Store.CheckoutAsync(new() { [product.Upc] = 2 }, "approve", null, db.Token);
+
+        var items = (await db.ReadItemsAsync(product)).ToDictionary(i => i.Epc);
+        Assert.Equal((Item.Sold, sale.Id), (items["A001"].Status, items["A001"].SaleId));
+        Assert.Equal((Item.Sold, sale.Id), (items["A002"].Status, items["A002"].SaleId));
+        Assert.NotNull(items["A001"].SoldAtUtc);
+        Assert.Equal((Item.InStock, (string?)null), (items["B003"].Status, items["B003"].SaleId));
+        Assert.Equal(1, (await db.ReadProductAsync(product))!.QuantityInStock);
+    }
+
+    [MongoReplicaSetFact]
+    public async Task ScannedTagIsTheUnitSoldAndCannotBeSoldOrReceivedAgain()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var product = await db.AddProductAsync();
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(product, 1, "A001", "A002", "A003"), db.Token);
+
+        // The newest-scanned tag plus one barcode unit: A003 exactly, then the oldest remaining (A001).
+        var sale = await db.Store.CheckoutAsync(new() { ["a003"] = 1, [product.Upc] = 1 }, "approve", null, db.Token);
+
+        var items = (await db.ReadItemsAsync(product)).ToDictionary(i => i.Epc);
+        Assert.Equal(sale.Id, items["A003"].SaleId);
+        Assert.Equal(sale.Id, items["A001"].SaleId);
+        Assert.Equal(Item.InStock, items["A002"].Status);
+        Assert.Equal(1, (await db.ReadProductAsync(product))!.QuantityInStock);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            db.Store.CheckoutAsync(new() { ["A003"] = 1 }, "approve", null, db.Token));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            db.Store.CheckoutAsync(new() { ["A002"] = 2 }, "approve", null, db.Token));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.Products.ReceiveStockAsync(
+            MongoTestDatabase.NewTaggedReception(product, 2, "A003"), db.Token));
+        Assert.Equal(1, (await db.ReadProductAsync(product))!.QuantityInStock);
+        Assert.Single(await db.ReadSalesAsync());
+    }
+
+    [MongoReplicaSetFact]
+    public async Task ScanningATagABarcodeSaleGuessedMovesTheGuessToAnotherUnit()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var product = await db.AddProductAsync();
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(product, 1, "A001", "A002", "A003"), db.Token);
+
+        // Customer A buys one by barcode; the system guesses the oldest tag, A001.
+        var first = await db.Store.CheckoutAsync(new() { [product.Upc] = 1 }, "approve", null, db.Token);
+        var items = (await db.ReadItemsAsync(product)).ToDictionary(i => i.Epc);
+        Assert.Equal((Item.Sold, Item.SoldByGuess, first.Id), (items["A001"].Status, items["A001"].SoldBy, items["A001"].SaleId));
+
+        // Customer B scans the real A001: B gets A001, and A's guess moves to the oldest unit left, A002.
+        var second = await db.Store.CheckoutAsync(new() { ["A001"] = 1 }, "approve", null, db.Token);
+        items = (await db.ReadItemsAsync(product)).ToDictionary(i => i.Epc);
+        Assert.Equal((Item.Sold, Item.SoldByScan, second.Id), (items["A001"].Status, items["A001"].SoldBy, items["A001"].SaleId));
+        Assert.Equal((Item.Sold, Item.SoldByGuess, first.Id), (items["A002"].Status, items["A002"].SoldBy, items["A002"].SaleId));
+        Assert.Equal(Item.InStock, items["A003"].Status);
+        Assert.Equal(1, (await db.ReadProductAsync(product))!.QuantityInStock);
+
+        // A confirmed sale is final: scanning A001 again is refused.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            db.Store.CheckoutAsync(new() { ["A001"] = 1 }, "approve", null, db.Token));
+
+        // Selling A003 by scan leaves no stock. A002 still carries A's guess, and with nothing left to move it
+        // to, scanning A002 is refused rather than selling more units than were received.
+        await db.Store.CheckoutAsync(new() { ["A003"] = 1 }, "approve", null, db.Token);
+        Assert.Equal(0, (await db.ReadProductAsync(product))!.QuantityInStock);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            db.Store.CheckoutAsync(new() { ["A002"] = 1 }, "approve", null, db.Token));
+    }
+
+    [MongoReplicaSetFact]
+    public async Task ReceivingATagABarcodeSaleGuessedPutsItBackWithoutAddingStock()
+    {
+        await using var db = await MongoTestDatabase.CreateAsync();
+        var product = await db.AddProductAsync();
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(product, 1, "A001", "A002"), db.Token);
+        var sale = await db.Store.CheckoutAsync(new() { [product.Upc] = 1 }, "approve", null, db.Token);
+
+        // A001 was guessed but is still on the shelf; rescanning it alongside a new tag corrects the guess.
+        await db.Products.ReceiveStockAsync(MongoTestDatabase.NewTaggedReception(product, 2, "A001", "B001"), db.Token);
+
+        var items = (await db.ReadItemsAsync(product)).ToDictionary(i => i.Epc);
+        Assert.Equal(Item.InStock, items["A001"].Status);
+        Assert.Null(items["A001"].SaleId);
+        Assert.Equal((Item.Sold, sale.Id), (items["A002"].Status, items["A002"].SaleId));
+        Assert.Equal(Item.InStock, items["B001"].Status);
+        Assert.Equal(2, (await db.ReadProductAsync(product))!.QuantityInStock);
+    }
+
+    [MongoReplicaSetFact]
     public async Task MultiItemShortageLeavesEveryProductAndCustomerUnchanged()
     {
         await using var db = await MongoTestDatabase.CreateAsync();
