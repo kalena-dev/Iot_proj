@@ -40,6 +40,21 @@ public sealed class RfidTests
     }
 
     [Fact]
+    public async Task RepeatPresentationsOfOneTagAreStoredOnceAndNeverFillTheSession()
+    {
+        var service = Create();
+        var session = service.Open();
+        // A tag flickering at the edge of the reader's range arrives with a new scan ID each time.
+        for (var i = 0; i < 150; i++)
+            Assert.True(await service.AcceptAsync(new(session, ["AABB"], Guid.NewGuid()), Resolve));
+
+        var tag = Assert.Single(service.Read(session)!);
+        Assert.Equal(("AABB", "1001", (string?)null), (tag.Epc, tag.Code, tag.ScanId));
+        Assert.True(await service.AcceptAsync(new(session, ["CCDD"], Guid.NewGuid()), Resolve));
+        Assert.Equal(2, service.Read(session)!.Length);
+    }
+
+    [Fact]
     public async Task InvalidAndUnmappedBatchesAreAtomic()
     {
         var service = Create();

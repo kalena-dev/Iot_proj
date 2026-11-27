@@ -88,16 +88,17 @@ public sealed class RfidCheckout(IOptions<RfidOptions> options, TimeProvider clo
         {
             var code = active.IsReceiving ? "" :
                 await resolve(epc) ?? throw new ArgumentException("An EPC has no stored product mapping.");
-            mapped.Add(new(epc, code, active.IsReceiving ? null : batch.ScanId?.ToString("N")));
+            // One tag is one unit: a repeat presentation (new scan ID) of the same EPC is not another item,
+            // so tags are stored by EPC only and re-reads never use up the session limit.
+            mapped.Add(new(epc, code));
         }
         lock (gate)
         {
             if (!sessions.TryGetValue(batch.Session, out var session) || session.Expires <= clock.GetUtcNow()) return false;
             var limit = session.IsReceiving ? ReceptionInput.MaxTags : 100;
-            var keys = mapped.Select(tag => tag.ScanId is { } id ? "scan:" + id : tag.Epc);
-            if (session.Tags.Keys.Union(keys).Count() > limit)
+            if (session.Tags.Keys.Union(epcs).Count() > limit)
                 throw new ArgumentException("Session tag limit reached.");
-            foreach (var tag in mapped) session.Tags.TryAdd(tag.ScanId is { } id ? "scan:" + id : tag.Epc, tag);
+            foreach (var tag in mapped) session.Tags.TryAdd(tag.Epc, tag);
             return true;
         }
     }
