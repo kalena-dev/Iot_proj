@@ -1,4 +1,4 @@
-"""Forward live SDK reads to the most recently opened local demo checkout."""
+"""Forward live SDK reads only to the explicitly paired local till workflow."""
 import os
 from pathlib import Path
 import sys
@@ -32,7 +32,7 @@ def main():
                 except HTTPError as error:
                     if error.code not in (400, 404):
                         raise
-                    print(f'Checkout rejected a tag (HTTP {error.code}). Check the mapping or reload checkout.', file=sys.stderr)
+                    print(f'Checkout rejected a tag (HTTP {error.code}). Check inventory eligibility and explicit reader pairing.', file=sys.stderr)
                     retry_after[epc] = time.monotonic() + 5
                     continue
                 retry_after.pop(epc, None)

@@ -14,18 +14,20 @@ import urllib.request
 from urllib.parse import urlparse
 
 
-def send(epcs, url, key, session):
+def send(epcs, url, key, session, *, source='reader'):
     if not isinstance(epcs, list) or not 1 <= len(epcs) <= 100:
         raise ValueError('Expected an array of 1–100 EPCs')
-    if any(not isinstance(epc, str) or not 4 <= len(epc) <= 128
+    if source not in ('reader', 'manual'):
+        raise ValueError('Expected reader or manual event source')
+    if any(not isinstance(epc, str) or not 4 <= len(epc) <= 24
            or len(epc) % 2 or any(c not in '0123456789abcdefABCDEF' for c in epc)
            for epc in epcs):
         raise ValueError('Expected hexadecimal EPC bytes')
     parsed = urlparse(url)
-    if parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')):
-        raise ValueError('Use HTTPS except on loopback')
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('Use a certificate-validated HTTPS server URL')
     request = urllib.request.Request(url.rstrip('/') + '/api/rfid/events',
-        data=json.dumps({'session': session, 'epcs': epcs}).encode(),
+        data=json.dumps({'session': session, 'epcs': epcs, 'source': source}).encode(),
         headers={'Content-Type': 'application/json', 'X-Rfid-Key': key}, method='POST')
     with urllib.request.urlopen(request, timeout=10) as response:
         return response.status
@@ -55,7 +57,7 @@ def main():
             for epcs in batches:
                 for attempt in range(3):
                     try:
-                        send(epcs, url, key, session)
+                        send(epcs, url, key, session, source='reader' if args.sdk else 'manual')
                         break
                     except HTTPError as error:
                         if error.code < 500 or attempt == 2:

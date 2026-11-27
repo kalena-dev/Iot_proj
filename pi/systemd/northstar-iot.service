@@ -6,12 +6,32 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Render these placeholders with pi/install-services.sh.
-User=@USER@
-WorkingDirectory=@PROJECT_ROOT@
-ExecStart="@NODE@" "@PROJECT_ROOT@/iot-server/dist/main.js"
+User=northstar-iot
+Group=northstar-iot
+WorkingDirectory="@PROJECT_ROOT@/iot"
+EnvironmentFile=/etc/northstar/iot.env
+Environment=NORTHSTAR_CONFIG_FILE=/etc/northstar/iot.env
+Environment=HOME=/var/lib/northstar-iot
+ExecStart="@NODE@" "@PROJECT_ROOT@/iot/dist/main.js"
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
+UMask=0077
+StateDirectory=northstar-iot
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/northstar-iot
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+InaccessiblePaths=-/etc/northstar/web.env -/etc/northstar/fan.env
 
 [Install]
 WantedBy=multi-user.target

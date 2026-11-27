@@ -1,0 +1,7 @@
+# Local classroom HTTPS: set NORTHSTAR_HOST to the Pi's stable DNS/mDNS name.
+# Trust Caddy's local CA certificate on each client; never distribute its CA key.
+# For a public DNS name with valid ACME reachability, remove `tls internal`.
+{$NORTHSTAR_HOST} {
+    tls internal
+    reverse_proxy 127.0.0.1:5198
+}

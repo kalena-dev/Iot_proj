@@ -30,6 +30,10 @@ class Cf600Tests(unittest.TestCase):
             with self.subTest(packet=packet):
                 self.assertEqual(([], b''), parse_epcs(packet))
 
+    def test_epcs_are_at_most_twelve_complete_bytes(self):
+        self.assertEqual((['AA' * 12], b''), parse_epcs(frame(b'\xaa' * 12)))
+        self.assertEqual(([], b''), parse_epcs(frame(b'\xaa' * 13)))
+
     def test_inventory_uses_exact_classroom_command_and_preserves_fragment(self):
         reader = Mock()
         packet = frame()

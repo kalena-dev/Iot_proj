@@ -42,14 +42,14 @@ try:
                 if len(pending) < 8:
                     break
                 payload_length = int.from_bytes(pending[6:8], "little")
-                if not 8 <= payload_length <= 70:
+                if not 8 <= payload_length <= 18:
                     del pending[0]
                     continue
                 frame_length = payload_length + 9
                 if len(pending) < frame_length:
                     break
                 epc_length = pending[12]
-                if 2 <= epc_length <= 64 and payload_length == epc_length + 6:
+                if 2 <= epc_length <= 12 and payload_length == epc_length + 6:
                     print(monotonic(), pending[13:13 + epc_length].hex().upper(), flush=True)
                 del pending[:frame_length]
         if status not in (0, -7):

@@ -1,0 +1,17 @@
+# Mosquitto denies every topic not explicitly granted below.
+# These usernames must match the independently provisioned password file.
+user sensorFrig1
+topic write Frig1
+
+user sensorFrig2
+topic write Frig2
+
+user northstar-iot
+topic read Frig1
+topic read Frig2
+topic read store/fan/status
+topic write store/fan/set
+
+user northstar-fan
+topic read store/fan/set
+topic write store/fan/status

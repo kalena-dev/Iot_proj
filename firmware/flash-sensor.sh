@@ -8,6 +8,7 @@ if [[ $# -ne 2 || ( "$1" != "Frig1" && "$1" != "Frig2" ) ]]; then
 fi
 
 topic=$1
+fridge_id=${topic#Frig}
 port=$2
 firmware_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 sketch="$firmware_dir/FridgeSensor"
@@ -30,7 +31,7 @@ mkdir -p "$build_dir"
 chmod 700 "$firmware_dir/build" "$build_dir"
 printf 'Building %s with DHT11 on GPIO26; uploading to %s\n' "$topic" "$port"
 "$cli" compile --fqbn "$fqbn" --build-path "$build_dir" \
-  --build-property "compiler.cpp.extra_flags=-DFRIDGE_TOPIC=\"${topic}\" -DDHT_PIN=26" \
+  --build-property "compiler.cpp.extra_flags=-DFRIDGE_ID=${fridge_id} -DDHT_PIN=26" \
   "$sketch"
 "$cli" upload --fqbn "$fqbn" --port "$port" --input-dir "$build_dir" \
   --upload-property upload.speed=460800 "$sketch"

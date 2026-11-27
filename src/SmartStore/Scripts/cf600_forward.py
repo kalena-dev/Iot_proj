@@ -6,6 +6,7 @@ import sys
 import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 from uuid import uuid4
 
 RESCAN_GAP = 1.0
@@ -14,11 +15,18 @@ RESCAN_GAP = 1.0
 def main():
     pairing = Path(os.environ["RFID_LOCAL_PAIRING_FILE"])
     key = os.environ["RFID_API_KEY"]
-    url = "http://127.0.0.1:5080/api/rfid/events"
+    server = os.environ["RFID_SERVER_URL"].rstrip("/")
+    parsed = urlparse(server)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("RFID_SERVER_URL must use certificate-validated HTTPS")
+    url = server + "/api/rfid/events"
     active = None
     presentations = {}
     for line in sys.stdin:
         observed, epc = line.split()
+        epc = epc.upper()
+        if not 4 <= len(epc) <= 24 or len(epc) % 2 or any(c not in "0123456789ABCDEF" for c in epc):
+            raise ValueError("Expected 4–24 hexadecimal EPC characters in complete bytes")
         observed = float(observed)
         session = pairing.read_text().strip()
         if not session:
@@ -32,7 +40,7 @@ def main():
             scan_id, retry_at = str(uuid4()), 0
         if now >= retry_at:
             request = Request(url, json.dumps({
-                "session": session, "epcs": [epc], "scanId": scan_id,
+                "session": session, "epcs": [epc], "scanId": scan_id, "source": "reader",
             }).encode(), {"Content-Type": "application/json", "X-Rfid-Key": key})
             try:
                 with urlopen(request, timeout=2):

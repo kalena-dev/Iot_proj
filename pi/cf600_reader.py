@@ -38,7 +38,7 @@ def parse_epcs(buf):
         if length >= 6 and data[0] == 0:
             epc_length = data[5]
             # Never emit zero-length, truncated, or oversized identifiers.
-            if 2 <= epc_length <= 64 and len(data) == 6 + epc_length:
+            if 2 <= epc_length <= 12 and len(data) == 6 + epc_length:
                 epcs.append(data[6:].hex().upper())
         buf = buf[end:]
     return list(dict.fromkeys(epcs)), buf

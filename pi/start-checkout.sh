@@ -10,14 +10,28 @@ export MongoDb__DatabaseName="${MongoDb__DatabaseName:-smart_store}"
 export Rfid__Mode=Reader
 export Rfid__ApiKey="$(openssl rand -hex 32)"
 export RFID_API_KEY="$Rfid__ApiKey"
-export RFID_SERVER_URL=http://127.0.0.1:5080
-export Security__UseHttpsRedirection=false
+export RFID_SERVER_URL="${RFID_SERVER_URL:-https://localhost:5081}"
+[[ "$RFID_SERVER_URL" == https://localhost:* || "$RFID_SERVER_URL" == https://127.0.0.1:* || "$RFID_SERVER_URL" == https://\[::1\]:* ]] || {
+  echo 'RFID_SERVER_URL must be a certificate-validated loopback HTTPS URL.' >&2; exit 1;
+}
+: "${ASPNETCORE_Kestrel__Certificates__Default__Path:?Set the local HTTPS certificate PFX path.}"
+[[ -r "$ASPNETCORE_Kestrel__Certificates__Default__Path" ]] || { echo 'HTTPS certificate is not readable.' >&2; exit 1; }
+export ASPNETCORE_Kestrel__Certificates__Default__Path
+export ASPNETCORE_Kestrel__Certificates__Default__Password="${ASPNETCORE_Kestrel__Certificates__Default__Password:-}"
+export Security__UseHttpsRedirection=true
+export Rfid__TillId="${RFID_TILL_ID:-local}"
+tls_args=()
+if [[ -n "${SSL_CERT_FILE:-}" ]]; then
+  [[ -r "$SSL_CERT_FILE" ]] || { echo 'SSL_CERT_FILE must name a trusted CA PEM file.' >&2; exit 1; }
+  export SSL_CERT_FILE
+  tls_args=(--cacert "$SSL_CERT_FILE")
+fi
 export Gpio__Enabled="${Gpio__Enabled:-false}"
 umask 077
 state="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/smartstore-checkout"
 mkdir -p "$state"
 export RFID_LOCAL_PAIRING_FILE="$state/pairing"
-"$dotnet" build src/SmartStore -p:NuGetAudit=false --disable-build-servers -p:UseSharedCompilation=false
+"$dotnet" build src/SmartStore --disable-build-servers -p:UseSharedCompilation=false
 if [[ ! -c /dev/ttyUSB0 ]] && lsusb -d 0483:5750 >/dev/null; then
   sudo modprobe usbserial vendor=0x0483 product=0x5750 && udevadm settle
 fi
@@ -30,10 +44,13 @@ done
 systemd-run --user --collect --unit=smartstore-poc-web --working-directory="$repo/src/SmartStore" \
   --setenv=MONGODB_ENV_FILE --setenv=MongoDb__DatabaseName --setenv=Rfid__Mode --setenv=Rfid__ApiKey \
   --setenv=RFID_LOCAL_PAIRING_FILE --setenv=Gpio__Enabled --setenv=Security__UseHttpsRedirection \
+  --setenv=Rfid__TillId --setenv=ASPNETCORE_Kestrel__Certificates__Default__Path \
+  --setenv=ASPNETCORE_Kestrel__Certificates__Default__Password \
   "$dotnet" bin/Debug/net8.0/SmartStore.dll --urls "$RFID_SERVER_URL"
 systemd-run --user --collect --unit=smartstore-poc-reader --working-directory="$repo" \
   --setenv=RFID_LOCAL_PAIRING_FILE --setenv=RFID_SERVER_URL --setenv=RFID_API_KEY \
+  ${SSL_CERT_FILE:+--setenv=SSL_CERT_FILE} \
   /usr/bin/python3 pi/local_checkout_reader.py
-curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 15 "$RFID_SERVER_URL/health"
+curl "${tls_args[@]}" -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 15 "$RFID_SERVER_URL/health"
 echo
 echo "Open $RFID_SERVER_URL/Checkout"

@@ -1,6 +1,15 @@
-# Copy to /etc/mosquitto/conf.d/northstar.conf (after checking existing listeners).
-# Classroom private LAN only; use TLS before exposing outside a trusted network.
-listener 1883
+# Explicit initial install: pi/install-mqtt.sh. Audit other includes for listeners.
+# No plaintext listener. Revoke old shared credentials when migrating.
+per_listener_settings true
+listener 8883
+protocol mqtt
 allow_anonymous false
-password_file /etc/mosquitto/northstar-passwords
+password_file /etc/mosquitto/northstar/passwords
+acl_file /etc/mosquitto/northstar/acl
+cafile /etc/mosquitto/northstar/ca.crt
+certfile /etc/mosquitto/northstar/server.crt
+keyfile /etc/mosquitto/northstar/server.key
+tls_version tlsv1.2
+require_certificate false
+# Server-authenticated TLS plus separate password identities/deny-default ACL.
 # Debian/Raspberry Pi OS's main mosquitto.conf already configures persistence.

@@ -6,15 +6,34 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Render these placeholders with pi/install-services.sh.
-User=@USER@
+User=northstar-fan
+Group=northstar-fan
 SupplementaryGroups=gpio
-WorkingDirectory=@PROJECT_ROOT@
-ExecStart="@PYTHON@" "@PROJECT_ROOT@/pi/fan_controller.py"
+WorkingDirectory="@PROJECT_ROOT@/fan"
+EnvironmentFile=/etc/northstar/fan.env
+Environment=HOME=/var/lib/northstar-fan
+ExecStart="@PYTHON@" "@PROJECT_ROOT@/fan/fan_controller.py"
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
-TimeoutStopSec=5
+TimeoutStopSec=10
 NoNewPrivileges=true
+UMask=0077
+StateDirectory=northstar-fan
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/northstar-fan
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=-/etc/northstar/web.env -/etc/northstar/iot.env
+InaccessiblePaths=-@PROJECT_ROOT@/web -@PROJECT_ROOT@/iot
 
 [Install]
 WantedBy=multi-user.target
