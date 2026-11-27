@@ -1,126 +1,84 @@
-# Phase 3 — Product & inventory module
-
-Owner: Jonathan. Covers registering, editing and deleting products, and receiving stock.
+# Phase 3 — products, receiving and checkout
 
 ## Pages
 
-| Page | URL | What it does |
-| --- | --- | --- |
-| Products | `/Products` | Product table with search (name, producer, a scanned UPC, or a unit's RFID tag), category filter, stock badges (green = OK, amber = 5 or fewer, red = out). Edit, Receive and Delete (with on-page confirmation) per row. |
-| Add product | `/Products/Create` | Register a product type once, identified by its UPC. New products start at 0 in stock and you're sent to Receive next. |
-| Edit product | `/Products/Edit/{id}` | Change product details. Stock can't be typed in here; it only changes through deliveries and sales. |
-| Receive stock | `/Products/Receive/{id?}` | Scan the UPC (or pick a product), then scan each unit's RFID tag; every new tag is registered as one item and adds one to stock. Rescanned tags already in stock are skipped; tags of another product or already sold are refused. Products without tags are received by quantity. Also date received, optional expiry and supplier note. Shows that product's delivery history; a delivery entered by mistake can be undone (which also unregisters its tags) if its units haven't been sold. |
+| Page | Purpose |
+|---|---|
+| `/Products` | Staff product list, filtering, inventory counts and retirement |
+| `/Products/Create` | Register a product type once with name, category, decimal price, UPC and producer |
+| `/Products/Edit/{id}` | Edit descriptive fields without overwriting stock |
+| `/Products/Receive/{id?}` | Dated deliveries, per-unit EPC registration, correction and delivery undo |
+| `/Checkout` | Guest or optional member checkout, barcode/manual entry, explicitly paired reader, simulated payment |
+| `/Management`, `/InventoryReport`, `/Reports` | Shared stock, live inventory and date-filtered sales/customer activity |
+| `/Profile`, `/PurchaseHistory`, `/Spending` | Account-owned membership, points, receipts and price/spending reports |
 
-Every action shows a notification ("Product added successfully", "Received 24 × Coca-Cola. Stock is now 48.", etc.).
+Each operation reports success/failure. Technical setup belongs here, not in ordinary customer labels.
 
-**Scanners:** the barcode scanner and the CF600 RFID reader (in keyboard mode) type the code and press Enter. On the product form, Enter in the UPC box moves to the next field instead of submitting early. In the search and lookup boxes, Enter searches. In the Receive page's tag box, each Enter starts a new line, so scan one unit after another.
+## Identity and relationships
 
-## Database (MongoDB `smart_store`)
+**UPC** identifies a product type; an **EPC** identifies one physical tagged unit. Store UPC as text to preserve leading zeros. The assignment's UPC maximum is 13 characters and EPC maximum is 24 hexadecimal characters; do not truncate scans. Short synthetic product codes are not claims of a registered GS1 UPC.
 
 ```mermaid
 erDiagram
-    PRODUCT ||--o{ RECEPTION : "is received in"
-    PRODUCT ||--o{ ITEM : "has tagged units"
-    RECEPTION ||--o{ ITEM : "registers"
-    PRODUCT ||--o{ SALE_LINE : "is sold in"
-    CUSTOMER ||--o{ SALE : "makes"
-    SALE ||--|{ SALE_LINE : "contains"
-
-    PRODUCT {
-        ObjectId _id PK
-        string name
-        string category
-        decimal price
-        string upc UK "digits, max 13"
-        string producer
-        string description "optional"
-        string imageUrl "optional"
-        int quantityInStock "tagged + untagged units"
-        datetime createdAtUtc
-        datetime updatedAtUtc
-    }
-    ITEM {
-        string _id PK "EPC, uppercase hex"
-        ObjectId productId FK
-        string status "in_stock or sold"
-        ObjectId receptionId FK "delivery that registered it"
-        datetime receivedAtUtc
-        string saleId "set when sold"
-    }
-    RECEPTION {
-        ObjectId _id PK
-        ObjectId productId FK
-        int quantity "new tags + untagged units"
-        string[] epcs "tags this delivery registered"
-        date receivedOn
-        date expiresOn "optional"
-        string note "optional, supplier / invoice"
-        datetime createdAtUtc
-    }
-    CUSTOMER {
-        ObjectId _id PK
-        string email UK
-        int totalPoints
-    }
-    SALE {
-        string _id PK
-        string customerId FK "optional, guest checkout"
-        decimal total
-        int pointsEarned
-        datetime createdAtUtc
-    }
-    SALE_LINE {
-        string productCode
-        string name
-        decimal price
-        int quantity
-    }
+    PRODUCT ||--o{ RECEPTION : receives
+    PRODUCT ||--o{ ITEM : owns
+    RECEPTION ||--o{ ITEM : registers
+    PRODUCT ||--o{ SALE_LINE : identifies
+    ACCOUNT ||--o{ SALE : owns
+    ACCOUNT ||--|| ACCOUNT_BALANCE : earns
+    ACCOUNT ||--o{ COUPON : redeems
+    SALE ||--|{ SALE_LINE : contains
 ```
 
-`CUSTOMER`, `SALE` and `SALE_LINE` are owned by the checkout and accounts work (Renz, Fahad) and are shown here only to make the relationships clear; they currently live in the `customers` and `demo_sales` collections.
+- `products`: stable ObjectId, current UPC/name/category/price/producer, stock and nullable `archivedAtUtc`.
+- `items`: EPC primary key, stable product/reception IDs, in-stock/sold state, sale reference/time and scan/guess attribution.
+- `receptions`: stable product ID, newly added quantity/EPCs, date received, optional expiry/note.
+- `demo_sales`: receipt/attempt identity, account ID or private guest ownership, email contact snapshot, itemized historical prices/names, totals/points/payment/mail outcome.
+- Sale lines retain stable `ProductId`, original code/name/price/quantity and exact EPCs. Reports group stable identity, not today's mutable UPC.
+- `store_accounts`: verified credentials, name, generated membership, immutable account ID and revocation state.
+- `account_balances` and account-owned coupons: points/rewards keyed by account ID.
+- The Phase 1 `customers` registry and older email-only balances/receipts are preserved separately. A new account never claims them merely by verifying the same email.
 
-Collections and indexes:
+No authenticity claim is made for a manually entered EPC. Reader-origin events authenticate the bridge/session, not the physical tag.
 
-- `products` — unique index `ux_products_upc` (a UPC can't be registered twice), plus `ix_products_category`.
-- `items` — one document per RFID-tagged unit, keyed by its EPC (so a tag can only exist once); `ix_items_product_status` on `(productId, status)`.
-- `receptions` — `ix_receptions_product_receivedOn` on `(productId, receivedOn desc)`.
-- Deleting a product also deletes its receptions and items.
+## Receiving and stock invariants
 
-Stock is stored on the product (`quantityInStock`) so checkout can read it in one lookup. It changes only through `ReceiveStockAsync` (adds) and `DecrementStockAsync` (removes, atomically, and refuses if there isn't enough).
+A product is defined once and can receive many dated deliveries. Scan each unit's EPC or enter a quantity of untagged units. The saved quantity counts new tags plus untagged units, not duplicated scans.
 
-At checkout, a paid sale also retires RFID items (`SellOldestFirstAsync`). The cart sends barcode units as `{ "UPC": quantity }` and each scanned tag as `{ "EPC": 1 }`.
+`quantityInStock >= count(in_stock items)`; the difference is untagged stock. Receiving atomically registers tags, increments stock and inserts a delivery. A duplicate tag already in stock is skipped. A tag owned by another product or sold by a confirmed scan is rejected.
 
-- A **scanned tag** is sold as that exact unit (`soldBy: "scan"`).
-- Each unit bought **by barcode** marks the product's oldest in-stock tag (earliest received) as sold (`soldBy: "guess"`). Untagged stock is used only once no tags are left.
-- A guess can be wrong. When a guessed tag is scanned again, at checkout or on Receive, it is put back in stock and the earlier sale's guess moves to the oldest other in-stock tag. If none is left, the earlier sale is counted as an untagged unit, and if there is none of those either, the scan is refused. Stock does not change; only which unit was sold is corrected.
-- A tag sold by scan is final: it can't be sold or received again. Tags are never deleted by a sale.
-- A declined payment changes no stock and no tags.
+Correction of an old guessed-sold tag is allowed even when no new stock arrives: the correction commits without adding stock or a fake delivery. Barcode sales consume untagged units before guessing tagged identities. When a historical guess must move, replacement stock must have existed by that original sale's time; a later delivery cannot be retroactively sold.
 
-## Integrated checkout
+Undo of a mistaken delivery is transactional and refuses units already sold. Concurrent undo cannot deduct twice. Product removal **archives** it: UPC mappings, EPCs and delivery history remain traceable and identifiers cannot silently be reassigned. Archived products are excluded from new sales/receiving but remain accessible to authorized staff.
 
-`StoreDemo` now injects `IProductRepository`; checkout and management load the same persistent products as `/Products`. There is no separate hardcoded catalog or stock reset on restart.
+UPC and EPC claims share collision protection, including concurrent operations. A barcode/quick-add selection cannot resolve to a different product because its digits shadow a registered tag.
 
-- UPC is the canonical cart and sale-line code. Manual/keyboard-scanner entry also accepts EPC, case-insensitively, and consolidates UPC/EPC aliases for the same product. Each entry adds one unit.
-- **Simulate RFID scan** builds virtual physical-item tags from up to two in-stock products. Distinct virtual tags for the same product count as separate units; reading the same virtual tag again does not duplicate it. These virtual identities are not the product-level EPC stored in inventory, and no physical RFID connection is claimed.
-- Checkout reloads product prices and validates quantities inside the same snapshot transaction as its writes. Approved payment commits **all stock deductions, receipt insertion, and registered-customer loyalty increments together**, or none. Declined attempts save a record without changing stock or points.
-- Atlas or a replica set is required. One point is earned per whole dollar of an approved registered-customer purchase; guest and declined purchases earn none. UPC/EPC aliases for the same product share the per-product quantity limit.
-- The driver's transaction callback retries transient conflicts with fresh attempt-local state and a stable receipt identity. If commit acknowledgement is lost, checkout checks for a majority-confirmed receipt; otherwise it reports an unknown outcome and instructs staff to check that reference before retrying. No compensating stock writes are issued. Email/status-indicator failures cannot turn a committed purchase into a failed payment.
-- Receipts and customer history remain available from `/Checkout`; SMTP receipt delivery is optional. `/Management` excludes declined attempts from its displayed revenue.
+## Checkout
 
-Delivery receiving commits its stock increment and history entry in one transaction. Undo commits history removal and stock deduction together; insufficient stock aborts both, and simultaneous undo requests cannot deduct twice. Deleting a product and its reception history is also transactional.
+Barcode/manual keyboard input is queued so one lookup cannot discard the next scan. A UPC adds product quantity; a registered eligible EPC adds one exact unit. Repeated EPC observations are deduplicated. The reader/cart rejects confirmed-sold or unknown units before payment.
 
-Transaction reads use snapshot isolation on the primary and commits use majority write concern. Callback failures attempt abort with an independent bounded token, so cancelling an HTTP request does not also cancel rollback. Server-side abort remains best-effort during network failure; uncommitted changes are not exposed as completed operations. See [MongoDB .NET transaction semantics](https://www.mongodb.com/docs/drivers/csharp/current/crud/transactions/).
+Tagged cart entries expose their EPC so **Remove** removes the selected physical unit. Continuous inventory does not immediately re-add a deliberately removed tag. The virtual RFID button is clearly simulated and is not hardware proof.
 
-**Outcome handling:** losing a commit acknowledgement can leave the caller uncertain whether the entire transaction committed. This is not a partially saved sale or delivery. Notifications preserve operation references and warn against blind retry; a separate HTTP resubmission is not automatically deduplicated.
+Membership is optional. Signed-in accounts earn one point per whole dollar of an approved purchase and receive receipts at their verified account email. Guests can complete the shopping/payment workflow without a membership account. Guest receipt access remains bound to that checkout browser rather than exposing a public receipt-ID lookup.
 
-## Database verification
+Each logical attempt has a protected owner-bound identity. A replay returns the same result; a reused attempt with different content is rejected. Approved stock/tag/coupon/receipt/points changes share one snapshot transaction with majority commit. Declines record the attempt without changing stock/points. Email failure cannot convert a committed purchase into a failed payment or invite a duplicate sale.
 
-`tests/SmartStore.Tests/MongoTransactionIntegrationTests.cs` retains real-replica-set regressions for stock/history accumulation, concurrent UPC/EPC duplicates, checkout totals and loyalty, declines, UPC/EPC aliases, shortages, rejected receipt/history writes, undo, deletion, cancellation, and outsider visibility before commit. Set `SMARTSTORE_TEST_MONGODB_URI` to a local replica-set URI as shown in the README. Tests refuse remote/Atlas hosts and create a fresh GUID database per case; no real application data is used.
+An unknown commit outcome preserves its operation reference and warns against blind retry. It is not permission to issue compensating stock writes.
 
-## UPC vs EPC
+## Reports and legacy records
 
-The **UPC** identifies a product type (every chair of one model shares it). The **EPC** on an RFID tag identifies one physical unit, so each tagged unit is an `items` document. `quantityInStock` counts all units; it is always at least the number of that product's `in_stock` items, and the difference is untagged stock sold by barcode.
+Inventory updates after purchases. Sales reports include units by product, most/least sold products, revenue, new/returning identified customers and busiest/quietest days for the chosen period. Personal receipt searches include quantities, purchase date/time, unit prices and a price-over-time diagram. Paging/aggregation is done server-side with bounded report windows.
 
-Older databases stored one EPC on each product. On first use, the app drops `ux_products_epc` and turns each old EPC (and saved EPC alias) into an in-stock item, up to the product's current stock. Tags beyond the stock count are dropped so they can be received again. `--backfill-checkout` runs the same migration.
+Changing a UPC does not rewrite receipts or split new product histories. Old sale lines lacking a stable product ID retain explicit legacy-code grouping rather than being guessed onto a possibly unrelated current product.
 
-**Checkout hand-off:** checkout still sells through `DecrementStockAsync`, which lowers stock but leaves the item `in_stock`. To mark the exact units sold, checkout should call `SellAsync(session, productId, quantity, epcs, saleId)` inside its transaction. It marks the tags sold, refuses a tag that was already sold, and refuses barcode sales of units that carry a tag.
+Older email-only purchases and loyalty remain unclaimed by new accounts. Staff may inspect those records and verify an original receipt/reference plus identity independently before any authorized transfer. Never bulk-link by email; never discard the old data to make migration easier.
+
+`--backfill-checkout` maintains supported code/index/view metadata only; it does not award legacy balances to current mailbox holders. Use a replica set/Atlas. Standalone MongoDB cannot run the required multi-document transactions.
+
+## Verification and handoff
+
+`tests/SmartStore.Tests/MongoTransactionIntegrationTests.cs` uses a disposable **loopback replica set**, never Atlas. It covers persistent stock/history/ownership/idempotency and rollback. `tests/checkout/checkout.test.cjs` exercises real checkout JavaScript behavior. See [README](../README.md#verification) for commands.
+
+Before the live demonstration: receive real tagged units; scan several together through the CF600; remove a selected unit; demonstrate decline/approve, exact stock, guest/member behavior, points, a single result on resubmission, receipt email and reports. Synthetic tags and parser fixtures do not prove RF acquisition.
+
+The earlier ownership notes identified Jonathan for inventory and Renz/Fahad for checkout/accounts. The group must confirm real final assignments in the [submission task table](../README.md#required-group-task-table).

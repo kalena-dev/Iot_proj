@@ -1,96 +1,76 @@
-# Email setup: minimal manual steps
+# Email setup — shared STARTTLS transport
 
-The application uses SMTP for alerts and IMAP for YES/NO replies. **Gmail is the guided default**; the normal `.env` settings still support other providers that permit SMTP/IMAP password authentication.
+The web app sends account registration, staff verification, recovery and receipt mail. The refrigeration service sends temperature alerts and reads YES/NO replies. **Use SMTP587 with STARTTLS for both.** The C# sender does not support implicit TLS465; the guided Gmail default is587.
 
-## Checkout receipts on the Pi
+## Private setup
 
-Guests can enter any valid email address at checkout. The app sends a receipt
-after an approved payment. Approved checkouts with an email create or reuse a customer account and credit one point per whole dollar.
-Replies go to the configured sender mailbox. The IoT service processes only
-its existing temperature-alert replies from its configured approval address.
+Use a dedicated application mailbox. Sign in yourself, enable the provider's required two-step verification and create an application password. For Gmail: <https://myaccount.google.com/apppasswords>. Do not substitute the main sign-in password or paste secrets into chat, source, browser URLs or command arguments.
 
-With 2-Step Verification enabled for the sending mailbox, generate a Google app
-password and run the following in a local terminal from the repository root:
+Configure SMTP host/587/user/password/from, IMAP host/993/user/password, the alert recipient and `EMAIL_ENABLED=true` in the appropriate private role files. Deployed web and IoT environments are **separate**; updating one must not grant the fan mailbox/database access.
 
-```sh
-python3 pi/setup-checkout-gmail.py your-sender@gmail.com
-systemctl --user restart smartstore-poc-web.service
-```
-
-The setup checks Gmail SMTP on port 587 with STARTTLS and opens the IMAP inbox
-read-only on port 993. It saves the verified settings in the private project
-`.env` and preserves other configuration. If using the alert wizard below with
-the same credentials file, select port 587 for compatibility with checkout.
-
-## What you must do once
-
-1. Choose a Gmail application mailbox (a dedicated account is recommended). Sign in yourself, enable **2-Step Verification**, then create an app password at **https://myaccount.google.com/apppasswords**. Name it something like `Northstar`. Google login, account creation and two-factor approvals cannot be automated by this application. If App passwords is unavailable, check account restrictions; a school/work administrator may prohibit it.
-2. Run the setup command below and enter the Gmail address, your **alert recipient/approval address**, and Google's **16-character app password**. Use a different recipient mailbox so replies arrive as new incoming messages. The recipient can be an existing school/personal email; it does not need SMTP/IMAP credentials in this application. Paste secrets only into the masked local prompt, not chat or command arguments.
-3. Confirm the setup test arrived (check spam/quarantine). Reply **NO** to a subsequent real temperature alert, keeping its subject, to verify the complete reply path without starting a motor.
+For local development with one private configuration file:
 
 ```bash
 npm --prefix iot-server run setup:email
 ```
 
-For a built installation without development dependencies:
+For an explicitly selected IoT role file:
 
 ```bash
-node iot-server/dist/setup-email.js
+NORTHSTAR_CONFIG_FILE=/private/path/iot.env npm --prefix iot-server run setup:email
 ```
 
-## What setup automates
+Run as an authorized operator with file permission; do not loosen deployed `root:role 0640` ownership to make the wizard writable. Copy only the web-required SMTP settings into its private environment through the normal administrator procedure, preserve each role's other settings, restore permissions, and restart the relevant service.
 
-- Fills Gmail SMTP `smtp.gmail.com:465` and IMAP `imap.gmail.com:993`, using TLS.
-- Uses the Gmail mailbox for SMTP sender, IMAP access and Reply-To.
-- Removes spaces from the app password and never echoes/logs it.
-- Verifies SMTP authentication **and** IMAP INBOX access before applying settings.
-- Sends one clearly labelled setup test to the address you approve. This test cannot authorize any motor action.
-- Saves all email settings with `EMAIL_ENABLED=true`, atomically and with file permissions `600`. MongoDB, MQTT and API settings are preserved.
-- Writes to `MONGODB_ENV_FILE` if explicitly set, otherwise the repository's private `.env`. Warns if real process environment variables would override the new values.
-- Restarts this checkout's running `northstar-iot` systemd service when noninteractive sudo is permitted, then checks live reply polling. It never restarts an unrelated checkout. If restart is not permitted or the service is not installed, it prints the manual restart instruction.
+The wizard masks the password, verifies SMTP and IMAP, submits one clearly labelled setup message, and atomically saves successful settings. It respects authoritative `NORTHSTAR_CONFIG_FILE`, then explicit `MONGODB_ENV_FILE`, otherwise project `.env`. Process environment overrides are reported. It never starts a motor. SMTP acceptance is not proof of final delivery: check the actual inbox/spam folder.
 
-No passwords are written to source files, shell history, browser URLs or the ESP32 firmware. **No ESP32 reflash is needed for email changes.** Gmail mailbox access is sensitive: protect the private configuration file and revoke the app password if the machine is lost.
+For a published installation, use `node iot-server/dist/setup-email.js`. The separate single-till Pi helper `python3 pi/setup-checkout-gmail.py sender@gmail.com` also uses587 STARTTLS; it is not the hardened service installer.
 
-If authentication or test submission fails, setup does not modify the configuration. It retains your entries in memory and offers retry, a fresh app password, corrected mailbox/recipient, or an SMTP port change (465 TLS / 587 required STARTTLS). Exiting discards those unsaved entries. Retries may submit another labelled test email. SMTP acceptance is not a guarantee of final external delivery: checking the recipient's inbox is still necessary.
+## Accounts and receipts
 
-Failures show a safe stage (`smtp-sign-in`, `imap-inbox` or `smtp-submit`), allowlisted error/response codes and guidance. A private report is saved to `$XDG_STATE_HOME/northstar/email-setup-diagnostic.json` (default `$HOME/.local/state/northstar/email-setup-diagnostic.json`). It contains no raw server responses, addresses, AUTH payloads or passwords. Its timestamp refers to the latest failed attempt; it is not proof the current configuration is still failing.
+Customers register name/email/password, then enter the code from their inbox. Staff use an additionally provisioned immutable account ID and a fresh emailed sign-in code. Recovery revokes old session stamps. Registration/recovery responses remain generic and mail limits apply to recipients as well as the network boundary.
 
-## Diagnostics and restart
+Checkout accepts nonmembers. Signed-in membership earns loyalty; a guest email, where provided, is a receipt destination, **not** ownership of an account or historical balance. A receipt-send failure does not undo a committed purchase. My account shows only that immutable account's purchases/points, never every receipt sharing its email.
+
+Receipts contain date/time, item quantities/unit prices, total and points. `sent` in the log means SMTP accepted the message. Pending/failed outcomes must not be described as inbox delivery. Do not replay a purchase to retry email.
+
+## Required refrigerator approval
+
+1. Keep both sensors publishing fresh readings.
+2. Save a threshold below the measured temperature.
+3. Confirm the real alert states the current temperature and asks whether to turn on the shared fan.
+4. From the configured recipient, reply **NO** on the first nonblank line with the subject unchanged; the fan must not start.
+5. For a fresh eligible alert, reply **YES**. It authorizes one durably associated command. Show pending until the Pi confirms GPIO output; inspect actual motor movement separately.
+6. Use OFF to preempt an outstanding ON. Keep the independent physical cutoff available.
+
+Opening the incoming reply in the application's mailbox does not make it ineligible. Processing uses durable mailbox UID/UIDVALIDITY progress, isolates malformed messages and does not starve older eligible replies behind newer mail. Restart must not turn one consumed approval into a fresh ON command.
+
+The default reply expiry and per-fridge cooldown are15 minutes. Sending retries no faster than once a minute while fresh/hot, and uses the latest temperature/threshold. Sensor/control work is not held behind SMTP delays. Recovery or stale telemetry does not authorize the motor.
+
+**Residual risk:** From headers plus a private subject token are not cryptographic sender authentication. This required classroom email workflow relies on the protected provider/mailbox. Tokens are redacted from stored logs; do not forward live approval messages or share the application mailbox.
+
+## Diagnostics
 
 ```bash
-# Read-only: check SMTP/IMAP access; sends nothing and does not enable email.
+# Read-only: no mail submitted or flags changed.
 npm --prefix iot-server run check:email
-
-# Built equivalent:
+# Published equivalent:
 node iot-server/dist/setup-email.js --check
 
-# Managed service restart/logs:
-sudo systemctl restart northstar-iot
-journalctl -u northstar-iot -n 40 --no-pager
+# After an authorized configuration change:
+sudo systemctl restart northstar-iot northstar-web
 ```
 
-The guided diagnostic also works with manually configured non-Gmail providers. OAuth-only providers require an OAuth implementation; a regular sign-in password is not a substitute for a provider-approved app password.
+The dashboard reports mailbox connectivity, not proof that each outgoing message arrived. Safe diagnostics omit raw addresses, passwords, AUTH payloads and server responses. Account/receipt/control tests should use synthetic identities and an isolated local sink, not a real customer mailbox.
 
-The dashboard shows **reply-mailbox connectivity**, not proof that every outgoing email arrived. Each fridge has a 15-minute default cooldown; failed sends retry at most once per minute while readings remain fresh and hot. Both fridges share one fan. Changing the recipient invalidates old approvals and prevents queued messages from being sent to the previous/placeholder address.
+OAuth-only providers need an approved OAuth integration; a regular password is not a workaround. Provider approval, actual delivery, Pi wiring, motor rotation and venue networking require live access and cannot be established by unit tests.
 
-## What remains physical/manual
+## Record lifecycle
 
-- Sensors must stay powered and online; these classic ESP32s require 2.4 GHz WiFi.
-- Verify the motor-driver wiring and power supply before enabling `northstar-fan`, then set `FAN_WIRING_CONFIRMED=true`. For the L293D mapping, use `FAN_GPIO=27` (EN1), `FAN_IN2_GPIO=17`, IN1 tied LOW, and `GPIO__ENABLED=false` to disable the conflicting old status GPIO. Setup intentionally does not enable physical GPIO/motor control.
-- After wiring is verified, start the real controller and test YES using a fresh real alert. Reply from the exact alert-recipient address, keep the subject/token and put **YES** alone on the first line. NO never starts the fan; use dashboard OFF or the safety timeout to stop an already-running fan.
+Staff access to mail/transaction logs is authorized access, not a reason to retain records forever. Use synthetic classroom data whenever possible. After grading and the agreed review period, the group owner must authorize removal of synthetic personal records and expired mail/challenge data; retain only required receipts/inventory history and security evidence for the agreed period. Do not run deletion against real records without the owner's explicit approval.
 
-See [PHASE2.md](PHASE2.md) for wiring, safety and service installation. Do not mistake the isolated simulated integration test for proof of a wired motor or external email delivery.
+Keep database backups encrypted, access-controlled and subject to the same retention period. Store CA keys, mailbox app passwords, backup keys and database administration credentials outside application accounts. On loss/compromise, revoke the mailbox password, rotate role credentials/keys, disable affected accounts/global sessions, isolate devices and inspect attributed events.
 
+Before treating backups as recovery: restore into an isolated, differently named replica-set database with a separate restore identity; compare receipt totals/points/stock and per-unit states; verify indexes and account revocation; record expected/actual results and cleanup. Never test restore over the live store. No backup/restore of a real deployment is implied by repository checks.
 
-## Checkout records in MongoDB
-
-Management links to all transactions and the email log. The `transactions` view
-reads the existing `demo_sales` collection. Each approved purchase with a receipt
-email creates or credits a customer in `customers`. The balance increases by one
-point per whole dollar. Receipt, temperature-alert and setup email attempts are
-tracked in `email_log`. Sent means the SMTP server accepted the message.
-
-Run `dotnet run --project src/SmartStore -- --backfill-checkout` with the store's
-MongoDB configuration to link earlier guest receipts, recover known mail outcomes
-and populate `product_codes` from existing inventory. It can be rerun. The Pi
-checkout launcher runs this step automatically.
+See [PHASE2.md](PHASE2.md) and [README](../README.md) for separate users, TLS/ACLs, wiring and final demonstration requirements.
