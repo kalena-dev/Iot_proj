@@ -41,8 +41,17 @@
       Array.from({ length: Math.min(index === 0 ? 2 : 1, product.stock) },
         (_, unit) => ({ epc: `DEMO-${code}-${unit}`, code })));
 
-  // Track processed scan events, or EPCs from older reader bridges.
+  // Keep track of which physical RFID tags were scanned (also after removal, so the reader can't re-add them)
   const scannedTags = new Map();
+
+  // The tags of each cart line, so checkout sells those exact units. The rest of a line was added by barcode.
+  // Simulated demo tags are not registered in inventory, so they count as barcode units.
+  const cartTags = new Map();
+  function rememberTag(code, epc) {
+    if (epc.startsWith('DEMO-')) return;
+    if (!cartTags.has(code)) cartTags.set(code, []);
+    cartTags.get(code).push(epc);
+  }
 
   // Display the shopping cart
   function render() {
@@ -68,7 +77,10 @@
       remove.textContent = 'Remove one';
 
       remove.addEventListener('click', () => {
-        // Remove one item from the cart
+        // Remove one item from the cart: a barcode unit first, otherwise the last scanned tag
+        const tags = cartTags.get(code) || [];
+        if (cart[code] <= tags.length) tags.pop();
+        if (!tags.length) cartTags.delete(code);
         cart[code]--;
 
         if (cart[code] <= 0) {
@@ -101,9 +113,15 @@
     checkout.disabled =
       Object.keys(cart).length === 0;
 
-    // Preserve existing backend cart format
+    // Barcode units as { code: quantity }, each scanned tag as { epc: 1 } so that exact unit is sold
+    const payload = {};
+    for (const [code, quantity] of Object.entries(cart)) {
+      const tags = cartTags.get(code) || [];
+      if (quantity > tags.length) payload[code] = quantity - tags.length;
+      for (const epc of tags) payload[epc] = 1;
+    }
     document.querySelector('#Cart').value =
-      JSON.stringify(cart);
+      JSON.stringify(payload);
   }
 
   // Add a product to the cart
@@ -170,8 +188,20 @@
       }
       if (response.status === 409) throw new Error('This code already belongs to another product. Scan it again.');
       if (!response.ok) throw new Error('Could not verify this code with inventory.');
-      const {code} = await response.json();
-      if (add(code)) resetMatch();
+      const {code, isTag} = await response.json();
+      const epc = barcode.toUpperCase();
+      if (isTag && scannedTags.has(epc)) {
+        error.textContent = 'This tag has already been scanned.';
+        return;
+      }
+      if (add(code)) {
+        if (isTag) {
+          scannedTags.set(epc, code);
+          rememberTag(code, epc);
+          render();
+        }
+        resetMatch();
+      }
     } catch (failure) {
       error.textContent = failure.message;
     } finally {
@@ -241,6 +271,8 @@
 
       cart[tag.code] = (cart[tag.code] || 0) + 1;
 
+      scannedTags.set(tag.epc, tag.code);
+      rememberTag(tag.code, tag.epc);
       added++;
     }
 

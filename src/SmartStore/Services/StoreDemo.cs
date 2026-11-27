@@ -77,8 +77,9 @@ public sealed class StoreDemo
         string? customerEmail, CancellationToken cancellationToken, string? receiptSender = null,
         string? couponId = null)
     {
-        if (cart.Count is < 1 or > 20 || cart.Any(x => x.Value is < 1 or > 50))
-            throw new InvalidOperationException("Add 1–20 different items with quantities between 1 and 50.");
+        // Keys are barcodes (any quantity) or scanned RFID tags (one unit each), so a cart may list up to 100.
+        if (cart.Count is < 1 or > 100 || cart.Any(x => x.Value is < 1 or > 50))
+            throw new InvalidOperationException("Add 1–100 scanned codes with quantities between 1 and 50.");
         if (paymentResult is not ("approve" or "decline"))
             throw new InvalidOperationException("Choose a valid simulated payment result.");
         if (cart.Keys.Any(code => code.Trim().Length is < 1 or > 512))
@@ -104,12 +105,25 @@ public sealed class StoreDemo
                 // Retry-local state and reads use the same snapshot as every stock write.
                 var productsById = new Dictionary<string, Product>();
                 var quantitiesById = new Dictionary<string, int>();
+                var tagsById = new Dictionary<string, List<string>>();
                 foreach (var (code, quantity) in cart)
                 {
                     var scannedCode = code.Trim();
-                    var product = (await _products.ResolveCodeAsync(scannedCode, token, session))?.Product
+                    var resolved = await _products.ResolveCodeAsync(scannedCode, token, session)
                         ?? throw new InvalidOperationException($"Unknown item code: {scannedCode}.");
+                    var product = resolved.Product;
                     var productId = product.Id ?? throw new InvalidOperationException("The product has no persistent identity.");
+                    if (resolved.IsTag)
+                    {
+                        // An RFID tag is one exact unit; that unit is the one sold.
+                        if (quantity != 1)
+                            throw new InvalidOperationException("Each RFID tag is one unit. Scan every unit's own tag.");
+                        if (!tagsById.TryGetValue(productId, out var tags)) tagsById[productId] = tags = [];
+                        var epc = scannedCode.ToUpperInvariant();
+                        if (tags.Contains(epc))
+                            throw new InvalidOperationException($"Tag {epc} is in the cart twice. Remove the duplicate.");
+                        tags.Add(epc);
+                    }
                     quantitiesById.TryGetValue(productId, out var previousQuantity);
                     var combinedQuantity = previousQuantity + quantity;
                     if (combinedQuantity > 50)
@@ -119,6 +133,8 @@ public sealed class StoreDemo
                     productsById[productId] = product;
                     quantitiesById[productId] = combinedQuantity;
                 }
+                if (productsById.Count > 20)
+                    throw new InvalidOperationException("Add at most 20 different products per checkout.");
                 var lines = quantitiesById.Select(item =>
                 {
                     var product = productsById[item.Key];
@@ -166,11 +182,10 @@ public sealed class StoreDemo
                 };
                 if (approved)
                 {
+                    // Lowers stock and marks tags sold: scanned tags exactly, barcode units oldest first.
                     foreach (var (productId, quantity) in quantitiesById)
-                    {
-                        if (!await _products.DecrementStockAsync(session, productId, quantity, token))
-                            throw new InvalidOperationException("Stock changed. Review your cart and try again.");
-                    }
+                        await _products.SellOldestFirstAsync(session, productId, quantity,
+                            tagsById.GetValueOrDefault(productId) ?? [], saleId, token);
                 }
                 await _sales.InsertOneAsync(session, sale, cancellationToken: token);
                 if (sale.EmailStatus == "pending")

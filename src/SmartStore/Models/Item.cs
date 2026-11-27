@@ -40,6 +40,15 @@ public sealed class Item
     [BsonIgnoreIfNull]
     public DateTime? SoldAtUtc { get; set; }
 
+    // How the sale knew this unit: its tag was scanned, or a barcode sale guessed it (oldest first).
+    // A guess is corrected when the tag turns up again. Null on older sales counts as scanned.
+    public const string SoldByScan = "scan";
+    public const string SoldByGuess = "guess";
+
+    [BsonElement("soldBy")]
+    [BsonIgnoreIfNull]
+    public string? SoldBy { get; set; }
+
     /// <summary>Returns the EPC in stored form, or null if it is not 4–128 hex digits in whole bytes.</summary>
     public static string? NormalizeEpc(string? epc)
     {

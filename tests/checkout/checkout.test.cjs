@@ -69,10 +69,23 @@ test('explicit simulation supports multiple tags and ignores repeat scans', () =
 test('reader polling deduplicates physical tags and does not re-add removed tags', async () => {
   const ui = setup('reader', [{epc: 'AABB', code: '1001'}, {epc: 'CCDD', code: '1001'}]);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(ui.cart(), {'1001': 2});
+  // Scanned tags are sent one by one, so checkout sells those exact units.
+  assert.deepEqual(ui.cart(), {'AABB': 1, 'CCDD': 1});
   ui.selectors['#cart-list'].children[0].children[1].click();
   await ui.poll();
-  assert.deepEqual(ui.cart(), {'1001': 1});
+  assert.deepEqual(ui.cart(), {'AABB': 1});
+});
+
+test('barcode units and scanned tags of one product are sent apart; removal takes a barcode unit first', async () => {
+  const ui = setup('reader', [{epc: 'E2801191A503006599BFD10D', code: '1002'}]);
+  await new Promise(resolve => setImmediate(resolve));
+  ui.selectors['#item-code'].value = '1002';
+  await ui.selectors['#add-item'].click();
+  assert.deepEqual(ui.cart(), {'1002': 1, 'E2801191A503006599BFD10D': 1});
+  ui.selectors['#cart-list'].children[0].children[1].click();
+  assert.deepEqual(ui.cart(), {'E2801191A503006599BFD10D': 1});
+  ui.selectors['#cart-list'].children[0].children[1].click();
+  assert.deepEqual(ui.cart(), {});
 });
 
 test('each submitted EPC adds one item', async () => {
@@ -82,19 +95,20 @@ test('each submitted EPC adds one item', async () => {
     input.value = epc;
     await input.handlers.keydown({key: 'Enter', preventDefault() {}});
   }
-  assert.deepEqual(ui.cart(), {'1002': 2});
+  assert.deepEqual(ui.cart(), {'E2801191A503006599BFD10D': 1});
+  assert.match(ui.selectors['#scan-error'].textContent, /already been scanned/);
 });
 
-test('separate reader events can carry the same EPC', async () => {
+test('separate reader events with the same EPC count one item', async () => {
   const tags = [{epc: 'AABB', code: '1001', scanId: 'first'}];
   const ui = setup('reader', tags);
   await new Promise(resolve => setImmediate(resolve));
   await ui.poll();
-  assert.deepEqual(ui.cart(), {'1001': 1});
+  assert.deepEqual(ui.cart(), {'AABB': 1});
   tags.push({epc: 'AABB', code: '1001', scanId: 'second'});
   await ui.poll();
   await ui.poll();
-  assert.deepEqual(ui.cart(), {'1001': 2});
+  assert.deepEqual(ui.cart(), {'AABB': 1});
 });
 
 test('an unrecognized barcode of any format can be assigned a product across sessions', async () => {

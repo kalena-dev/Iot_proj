@@ -188,7 +188,10 @@ public sealed partial class MongoProductRepository : IProductRepository
                 {
                     if (item.ProductId != product.Id)
                         throw new InvalidOperationException($"Tag {item.Epc} is already registered to another product.");
-                    if (item.Status != Item.InStock)
+                    // A tag a barcode sale only guessed is physically here: put it back, like a rescan.
+                    if (IsGuessedSale(item))
+                        await ReclaimGuessedAsync(session, item, requested, token);
+                    else if (item.Status != Item.InStock)
                         throw new InvalidOperationException($"Tag {item.Epc} was already sold. Remove it from this delivery.");
                 }
                 var known = existing.Select(i => i.Epc).ToHashSet(StringComparer.Ordinal);
@@ -284,7 +287,7 @@ public sealed partial class MongoProductRepository : IProductRepository
             var sold = await _items.UpdateManyAsync(session,
                 i => epcs.Contains(i.Epc) && i.ProductId == productId && i.Status == Item.InStock,
                 Builders<Item>.Update.Set(i => i.Status, Item.Sold).Set(i => i.SaleId, saleId)
-                    .Set(i => i.SoldAtUtc, DateTime.UtcNow),
+                    .Set(i => i.SoldAtUtc, DateTime.UtcNow).Set(i => i.SoldBy, Item.SoldByScan),
                 cancellationToken: cancellationToken);
             if (sold.ModifiedCount != epcs.Count)
                 throw new InvalidOperationException("A scanned item was already sold. Review your cart and try again.");
@@ -293,6 +296,65 @@ public sealed partial class MongoProductRepository : IProductRepository
         if (!await DecrementStockAsync(session, productId, quantity, cancellationToken) ||
             !await StockCoversTagsAsync(session, productId, cancellationToken))
             throw new InvalidOperationException("Stock changed. Review your cart and try again.");
+    }
+
+    public async Task<IReadOnlyList<string>> SellOldestFirstAsync(IClientSessionHandle session, string productId,
+        int quantity, IReadOnlyCollection<string> scannedEpcs, string saleId, CancellationToken cancellationToken = default)
+    {
+        if (quantity < scannedEpcs.Count || quantity < 1) throw new ArgumentOutOfRangeException(nameof(quantity));
+        var scanned = scannedEpcs.ToList();
+
+        // A scanned tag that an earlier barcode sale only guessed is in the customer's hand, so that guess was wrong.
+        foreach (var item in await _items.Find(session, i => scanned.Contains(i.Epc)).ToListAsync(cancellationToken))
+            if (item.ProductId == productId && IsGuessedSale(item))
+                await ReclaimGuessedAsync(session, item, scanned, cancellationToken);
+
+        // A barcode says which product, not which unit: retire the oldest tags first (first in, first out).
+        var guessed = quantity == scanned.Count ? [] : await _items
+            .Find(session, i => i.ProductId == productId && i.Status == Item.InStock && !scanned.Contains(i.Epc))
+            .SortBy(i => i.ReceivedAtUtc).ThenBy(i => i.Epc).Limit(quantity - scanned.Count)
+            .Project(i => i.Epc).ToListAsync(cancellationToken);
+
+        await SellAsync(session, productId, quantity, [.. scanned, .. guessed], saleId, cancellationToken);
+        if (guessed.Count > 0)
+            await _items.UpdateManyAsync(session, i => guessed.Contains(i.Epc),
+                Builders<Item>.Update.Set(i => i.SoldBy, Item.SoldByGuess), cancellationToken: cancellationToken);
+        return [.. scanned, .. guessed];
+    }
+
+    private static bool IsGuessedSale(Item item) => item.Status == Item.Sold && item.SoldBy == Item.SoldByGuess;
+
+    // Puts a guessed-sold tag back in stock and moves the earlier sale's guess to another in-stock unit of the
+    // product (oldest first, never one in keep). With no tag left, the earlier sale is counted as an untagged unit.
+    // Stock does not change: the earlier sale still removed one unit, only which unit is corrected.
+    private async Task ReclaimGuessedAsync(IClientSessionHandle session, Item item, IReadOnlyCollection<string> keep,
+        CancellationToken token)
+    {
+        var replacement = await _items
+            .Find(session, i => i.ProductId == item.ProductId && i.Status == Item.InStock && !keep.Contains(i.Epc))
+            .SortBy(i => i.ReceivedAtUtc).ThenBy(i => i.Epc).FirstOrDefaultAsync(token);
+        if (replacement is not null)
+        {
+            var moved = await _items.UpdateOneAsync(session, i => i.Epc == replacement.Epc && i.Status == Item.InStock,
+                Builders<Item>.Update.Set(i => i.Status, Item.Sold).Set(i => i.SaleId, item.SaleId)
+                    .Set(i => i.SoldAtUtc, item.SoldAtUtc).Set(i => i.SoldBy, Item.SoldByGuess),
+                cancellationToken: token);
+            if (moved.ModifiedCount != 1) throw new InvalidOperationException("Stock changed. Review your cart and try again.");
+        }
+        else
+        {
+            var product = await _products.Find(session, p => p.Id == item.ProductId).FirstOrDefaultAsync(token);
+            if (product is null || product.QuantityInStock <= await CountTaggedAsync(session, item.ProductId, token))
+                throw new InvalidOperationException(
+                    $"Tag {item.Epc} is marked as sold, and no other unit of this product is left to take its place.");
+        }
+
+        var reopened = await _items.UpdateOneAsync(session,
+            i => i.Epc == item.Epc && i.Status == Item.Sold && i.SoldBy == Item.SoldByGuess,
+            Builders<Item>.Update.Set(i => i.Status, Item.InStock)
+                .Unset(i => i.SaleId).Unset(i => i.SoldAtUtc).Unset(i => i.SoldBy),
+            cancellationToken: token);
+        if (reopened.ModifiedCount != 1) throw new InvalidOperationException("Stock changed. Review your cart and try again.");
     }
 
     public async Task<bool> DecrementStockAsync(IClientSessionHandle session, string productId, int quantity,

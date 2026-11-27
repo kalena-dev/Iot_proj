@@ -86,7 +86,8 @@ public sealed class CheckoutModel(StoreDemo store, ReceiptEmailService emailServ
         try
         {
             if (string.IsNullOrWhiteSpace(Cart)) throw new InvalidOperationException("Add an item first.");
-            if (Cart.Length > 4000) throw new InvalidOperationException("Cart is too large.");
+            // Up to 100 codes; an RFID tag can be 128 hex characters.
+            if (Cart.Length > 16000) throw new InvalidOperationException("Cart is too large.");
             var items = JsonSerializer.Deserialize<Dictionary<string, int>>(Cart)
                 ?? throw new InvalidOperationException("Add an item first.");
             sale = await store.CheckoutAsync(items, PaymentResult, email, cancellationToken, emailService.Sender, CouponId);
